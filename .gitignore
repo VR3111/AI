@@ -1,0 +1,7 @@
+cat <<EOF > .gitignore
+venv/
+__pycache__/
+data/chroma.sqlite3
+data/chroma/
+.env
+EOF
