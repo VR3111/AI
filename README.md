@@ -40,20 +40,23 @@ Example:
   "citations": [{ "source": "docs/volvo.pdf", "page": 18 }]
 }
 
-## 2. Guided Fallback
+2. Guided Fallback
 
 Used when:
+
 - The topic exists in the documents
+
 - But no explicit answer is stated
 
 Behavior:
-- Clearly states that no direct answer was found
-- Provides **extractive, document-faithful highlights**
-- Never framed as an answer
-- No synthesis or inference
-- Fully cited
 
-Example:
+- Clearly states that no direct answer was found
+
+- Provides extractive, document-faithful highlights
+
+- Never framed as an answer
+
+- Fully cited
 
 {
   "mode": "guided_fallback",
@@ -70,18 +73,24 @@ Example:
   ]
 }
 
-### 3. Hard Refusal
+3. Hard Refusal
 
 Used when:
-- The question is vague (e.g., “Tell me more”)
-- The question compares external entities
-- No meaningful retrieval is possible
+
+- Question is vague (e.g., “Tell me more”)
+
+- Question compares external entities
+
+- No meaningful retrieval exists
 
 Behavior:
-- No answer is provided
-- No highlights or citations are shown
-- A deterministic refusal message is returned
-- No document content is leaked
+
+- No answer
+
+- No bullets
+
+- Deterministic refusal message
+
 
 Example:
 ```json
@@ -93,22 +102,22 @@ Example:
 
 ---
 
-## ✅ **What the System Will NEVER Do (fixed Markdown)**
+What the System Will NEVER Do
 
-```md
-## What the System Will NEVER Do
+- Use external knowledge
 
-- Use external or pretrained knowledge
-- Infer intent beyond what is explicitly asked
-- Speculate or fill missing information
-- Answer cross-company or external comparisons
-- Explain mechanisms unless explicitly stated in the document
-- Turn uncertainty into confident language
+- Infer or speculate
 
-If the document does not state something explicitly, the system will not invent it.
+- Answer cross-company comparisons
+
+- Explain mechanisms unless explicitly stated
+
+- Rephrase uncertainty as confidence
+
+If the document does not say it, the system will not invent it.
 
 
-## Versioning & Trust
+Versioning & Trust
 
 - `v1` — First trusted, locked behavior
 - Each version tag represents a **verified trust checkpoint**
