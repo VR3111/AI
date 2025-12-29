@@ -26,8 +26,11 @@ jobs:
 
       - name: Start API server
         run: |
-          uvicorn app.api:app --port 8001 &
-          sleep 5
+          uvicorn app.api:app --host 127.0.0.1 --port 8001 &
+          for i in {1..10}; do
+            curl -sf http://127.0.0.1:8001/health && break
+            sleep 2
+          done
 
       - name: Run regression tests
         run: |
