@@ -1,4 +1,3 @@
-from together import Together
 import os
 
 SYSTEM_PROMPT = """
@@ -28,6 +27,9 @@ Important:
 
 
 def generate_answer(query: str, contexts: list[dict]) -> str:
+    # Lazy import so CI and API startup do NOT require Together SDK
+    from together import Together
+
     api_key = os.environ.get("TOGETHER_API_KEY")
     if not api_key:
         raise RuntimeError("TOGETHER_API_KEY is not set")
@@ -51,7 +53,7 @@ def generate_answer(query: str, contexts: list[dict]) -> str:
                 ),
             },
         ],
-        temperature=0
+        temperature=0,
     )
 
     return response.choices[0].message.content
