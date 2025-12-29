@@ -1,2 +1,6 @@
 fastapi
 uvicorn
+langchain-community
+langchain-huggingface
+chromadb
+sentence-transformers
