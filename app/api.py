@@ -1,7 +1,6 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 import re
-import os
 
 from app.llm import generate_answer
 from app.retrieve import retrieve, dedupe_results, MAX_DISTANCE
@@ -59,19 +58,14 @@ def is_explanatory_query(query: str) -> bool:
     )
 
 
-def mentions_external_entity(query: str, sources: list) -> bool:
+def mentions_external_entity(query: str) -> bool:
     comparison_keywords = {"better", "worse", "than", "vs", "versus", "compare"}
     words = set(re.findall(r"\b\w+\b", query.lower()))
     if not words.intersection(comparison_keywords):
         return False
 
-    known_text = " ".join(sources).lower()
     entities = re.findall(r"\b[A-Z][a-zA-Z]+\b", query)
-
-    for e in entities:
-        if e.lower() not in known_text:
-            return True
-    return False
+    return len(entities) >= 2
 
 
 def is_vague_query(query: str) -> bool:
@@ -185,6 +179,7 @@ def query_docs(payload: QueryRequest):
     if len(original_query.split()) <= 6 and state["last_successful_query"]:
         rewritten_query = f"In the context of {state['last_successful_query']}, {original_query}"
 
+    # Vague query refusal
     if is_vague_query(original_query):
         return {
             "query": original_query,
@@ -194,6 +189,17 @@ def query_docs(payload: QueryRequest):
             "debug": None,
         }
 
+    # External comparison refusal (BEFORE retrieval)
+    if mentions_external_entity(original_query):
+        return {
+            "query": original_query,
+            "mode": "hard_refusal",
+            "answer": refusal_message("external_entity"),
+            "citations": [],
+            "debug": None,
+        }
+
+    # Retrieval
     raw_results = retrieve(rewritten_query, k=6)
     results = dedupe_results(raw_results)
 
@@ -213,21 +219,12 @@ def query_docs(payload: QueryRequest):
             ],
         }
 
+    # No retrieval → refusal
     if not results:
         return {
             "query": original_query,
             "mode": "hard_refusal",
             "answer": refusal_message("no_chunks"),
-            "citations": [],
-            "debug": debug_payload if payload.debug else None,
-        }
-
-    sources_text = [doc.metadata.get("source", "") for doc, _ in results]
-    if mentions_external_entity(original_query, sources_text):
-        return {
-            "query": original_query,
-            "mode": "hard_refusal",
-            "answer": refusal_message("external_entity"),
             "citations": [],
             "debug": debug_payload if payload.debug else None,
         }
@@ -245,7 +242,8 @@ def query_docs(payload: QueryRequest):
         for doc, score in results
     ]
 
-    if is_explanatory_query(original_query) or not passed_threshold or not is_definition_query(original_query):
+    # Guided fallback
+    if is_explanatory_query(original_query) or not passed_threshold:
         bullets = build_bullet_highlights(relevant)
         return {
             "query": original_query,
@@ -256,6 +254,7 @@ def query_docs(payload: QueryRequest):
             "debug": debug_payload if payload.debug else None,
         }
 
+    # Direct answer
     answer = generate_answer(rewritten_query, relevant)
     state["last_successful_query"] = original_query
 
