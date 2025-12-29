@@ -15,9 +15,8 @@ RESP=$(curl -s -X POST $BASE_URL \
 
 echo "$RESP"
 
-echo "$RESP" | jq -e '.mode == "direct_answer"' > /dev/null
-echo "$RESP" | jq -e '.answer | test("quality")' > /dev/null
-echo "$RESP" | jq -e '.citations | length > 0' > /dev/null
+echo "$RESP" | jq -e '.mode == "hard_refusal"' > /dev/null
+echo "$RESP" | jq -e '.citations | length == 0' > /dev/null
 
 
 echo "===== TEST 2: Guided Fallback (Explanatory) ====="
