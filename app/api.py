@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 import re
+import os
 
 from app.llm import generate_answer
 from app.retrieve import retrieve, dedupe_results, MAX_DISTANCE
@@ -12,10 +13,6 @@ app = FastAPI(title="Internal Assistant API")
 # =====================================================
 
 def dedupe_citations(relevant_chunks):
-    """
-    Deduplicate citations by (source, page).
-    Used for Direct Answer only.
-    """
     seen = set()
     unique = []
     for r in relevant_chunks:
@@ -28,10 +25,6 @@ def dedupe_citations(relevant_chunks):
 
 
 def citations_from_bullets(bullets):
-    """
-    Build citations ONLY from displayed bullets
-    (used in Guided Fallback).
-    """
     seen = set()
     out = []
     for b in bullets:
@@ -47,9 +40,6 @@ def citations_from_bullets(bullets):
 # =====================================================
 
 def is_definition_query(query: str) -> bool:
-    """
-    Allows Direct Answer only for clear definition/list questions.
-    """
     return bool(
         re.match(
             r"^\s*what\b.*\b(are|is|means|refers to)\b",
@@ -60,9 +50,6 @@ def is_definition_query(query: str) -> bool:
 
 
 def is_explanatory_query(query: str) -> bool:
-    """
-    Forces Guided Fallback for mechanism / explanation questions.
-    """
     return bool(
         re.match(
             r"^\s*(how|why|in what way|in which way)\b",
@@ -73,12 +60,7 @@ def is_explanatory_query(query: str) -> bool:
 
 
 def mentions_external_entity(query: str, sources: list) -> bool:
-    """
-    Hard-refuse only if the query explicitly contains
-    a comparison AND mentions an entity not in documents.
-    """
     comparison_keywords = {"better", "worse", "than", "vs", "versus", "compare"}
-
     words = set(re.findall(r"\b\w+\b", query.lower()))
     if not words.intersection(comparison_keywords):
         return False
@@ -89,14 +71,10 @@ def mentions_external_entity(query: str, sources: list) -> bool:
     for e in entities:
         if e.lower() not in known_text:
             return True
-
     return False
 
 
 def is_vague_query(query: str) -> bool:
-    """
-    Detects follow-ups with no topic.
-    """
     return query.strip().lower() in {
         "tell me more",
         "explain more",
@@ -107,7 +85,7 @@ def is_vague_query(query: str) -> bool:
 
 
 # =====================================================
-# Refusal UX (LOCKED)
+# Refusal UX
 # =====================================================
 
 def refusal_message(reason: str) -> str:
@@ -134,7 +112,7 @@ def health_check():
 
 
 # =====================================================
-# Guided Fallback: bullet hygiene (extractive only)
+# Guided Fallback helpers
 # =====================================================
 
 _VERB_RE = re.compile(
@@ -164,11 +142,7 @@ def build_bullet_highlights(relevant, max_items: int = 4, min_len: int = 40):
         seen.add(key)
 
         sent = _first_complete_sentence(r["content"])
-        if not sent:
-            continue
-        if len(sent) < min_len:
-            continue
-        if not _VERB_RE.search(sent):
+        if not sent or len(sent) < min_len or not _VERB_RE.search(sent):
             continue
 
         bullets.append({
@@ -180,7 +154,6 @@ def build_bullet_highlights(relevant, max_items: int = 4, min_len: int = 40):
         if len(bullets) >= max_items:
             break
 
-    # Safety net: never empty
     if not bullets:
         for r in sorted(relevant, key=lambda x: x["score"]):
             sent = _first_complete_sentence(r["content"])
@@ -196,7 +169,7 @@ def build_bullet_highlights(relevant, max_items: int = 4, min_len: int = 40):
 
 
 # =====================================================
-# Main query endpoint
+# Main endpoint
 # =====================================================
 
 @app.post("/query")
@@ -209,11 +182,9 @@ def query_docs(payload: QueryRequest):
     original_query = payload.query
     rewritten_query = payload.query
 
-    # Rewrite short follow-ups
     if len(original_query.split()) <= 6 and state["last_successful_query"]:
         rewritten_query = f"In the context of {state['last_successful_query']}, {original_query}"
 
-    # Hard refuse vague queries
     if is_vague_query(original_query):
         return {
             "query": original_query,
@@ -223,7 +194,6 @@ def query_docs(payload: QueryRequest):
             "debug": None,
         }
 
-    # Retrieve
     raw_results = retrieve(rewritten_query, k=6)
     results = dedupe_results(raw_results)
 
@@ -243,7 +213,6 @@ def query_docs(payload: QueryRequest):
             ],
         }
 
-    # Hard refusal: no chunks
     if not results:
         return {
             "query": original_query,
@@ -253,7 +222,6 @@ def query_docs(payload: QueryRequest):
             "debug": debug_payload if payload.debug else None,
         }
 
-    # Hard refusal: external entity comparison
     sources_text = [doc.metadata.get("source", "") for doc, _ in results]
     if mentions_external_entity(original_query, sources_text):
         return {
@@ -277,8 +245,7 @@ def query_docs(payload: QueryRequest):
         for doc, score in results
     ]
 
-    # Explanatory → Guided Fallback
-    if is_explanatory_query(original_query):
+    if is_explanatory_query(original_query) or not passed_threshold or not is_definition_query(original_query):
         bullets = build_bullet_highlights(relevant)
         return {
             "query": original_query,
@@ -289,31 +256,6 @@ def query_docs(payload: QueryRequest):
             "debug": debug_payload if payload.debug else None,
         }
 
-    # Weak similarity → Guided Fallback
-    if not passed_threshold:
-        bullets = build_bullet_highlights(relevant)
-        return {
-            "query": original_query,
-            "mode": "guided_fallback",
-            "no_direct_answer_reason": "No direct answer was found in the documents for this question.",
-            "related_highlights": bullets,
-            "citations": citations_from_bullets(bullets),
-            "debug": debug_payload if payload.debug else None,
-        }
-
-    # Non-definition → Guided Fallback
-    if not is_definition_query(original_query):
-        bullets = build_bullet_highlights(relevant)
-        return {
-            "query": original_query,
-            "mode": "guided_fallback",
-            "no_direct_answer_reason": "No direct answer was found in the documents for this question.",
-            "related_highlights": bullets,
-            "citations": citations_from_bullets(bullets),
-            "debug": debug_payload if payload.debug else None,
-        }
-
-    # Direct Answer
     answer = generate_answer(rewritten_query, relevant)
     state["last_successful_query"] = original_query
 
