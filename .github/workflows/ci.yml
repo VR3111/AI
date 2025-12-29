@@ -30,9 +30,15 @@ jobs:
         run: |
           uvicorn app.api:app --host 127.0.0.1 --port 8001 &
           for i in {1..15}; do
-            curl -sf http://127.0.0.1:8001/health && break
+            if curl -sf http://127.0.0.1:8001/health; then
+              echo "API is healthy"
+              exit 0
+            fi
+            echo "Waiting for API..."
             sleep 2
           done
+          echo "API failed to start"
+          exit 1
 
       - name: Run regression tests
         run: |
