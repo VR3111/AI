@@ -78,6 +78,15 @@ def is_vague_query(query: str) -> bool:
     }
 
 
+def is_reset_query(query: str) -> bool:
+    return query.strip().lower() in {
+        "new topic",
+        "reset",
+        "clear context",
+        "start over",
+    }
+
+
 # =====================================================
 # Refusal UX
 # =====================================================
@@ -168,14 +177,25 @@ def build_bullet_highlights(relevant, max_items: int = 4, min_len: int = 40):
 
 @app.post("/query")
 def query_docs(payload: QueryRequest):
+    original_query = payload.query
+
+    # -------- RESET CONTEXT (HARD CONTROL) --------
+    if is_reset_query(original_query):
+        conversation_store.pop(payload.conversation_id, None)
+        return {
+            "query": original_query,
+            "mode": "hard_refusal",
+            "answer": "Context has been reset. Please ask a new question.",
+            "citations": [],
+            "debug": None,
+        }
+
     state = conversation_store.setdefault(
         payload.conversation_id,
         {"last_successful_query": None}
     )
 
-    original_query = payload.query
-    rewritten_query = payload.query
-
+    rewritten_query = original_query
     if len(original_query.split()) <= 6 and state["last_successful_query"]:
         rewritten_query = f"In the context of {state['last_successful_query']}, {original_query}"
 
@@ -189,7 +209,7 @@ def query_docs(payload: QueryRequest):
             "debug": None,
         }
 
-    # External comparison refusal (BEFORE retrieval)
+    # External comparison refusal
     if mentions_external_entity(original_query):
         return {
             "query": original_query,
@@ -219,7 +239,6 @@ def query_docs(payload: QueryRequest):
             ],
         }
 
-    # No retrieval → refusal
     if not results:
         return {
             "query": original_query,
@@ -242,7 +261,6 @@ def query_docs(payload: QueryRequest):
         for doc, score in results
     ]
 
-    # Guided fallback
     if is_explanatory_query(original_query) or not passed_threshold:
         bullets = build_bullet_highlights(relevant)
         return {
@@ -254,7 +272,6 @@ def query_docs(payload: QueryRequest):
             "debug": debug_payload if payload.debug else None,
         }
 
-    # Direct answer
     answer = generate_answer(rewritten_query, relevant)
     state["last_successful_query"] = original_query
 
