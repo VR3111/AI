@@ -172,6 +172,42 @@ def build_bullet_highlights(relevant, max_items: int = 4, min_len: int = 40):
 
 
 # =====================================================
+# Implement “Additional resources” for Direct Answer
+# =====================================================
+
+_STOPWORDS = {
+    "the","a","an","and","or","to","of","in","on","for","with","as","at","by",
+    "is","are","was","were","be","been","being","this","that","these","those",
+    "it","its","their","they","them","from","into","about","over","under",
+}
+
+def _tokenize(text: str) -> set[str]:
+    words = re.findall(r"[a-z0-9']+", text.lower())
+    return {w for w in words if w and w not in _STOPWORDS}
+
+def _best_sentence_from_chunk(content: str) -> str | None:
+    sent = _first_complete_sentence(content)
+    if not sent:
+        return None
+    # Keep it extractive and “statement-like”
+    if len(sent) < 25:
+        return None
+    return sent.strip()
+
+def _is_redundant_confirmation(
+    primary_answer: str,
+    candidate_sentence: str,
+    min_overlap: float = 0.6
+) -> bool:
+    a = _tokenize(primary_answer)
+    b = _tokenize(candidate_sentence)
+    if not a or not b:
+        return False
+    overlap = len(a.intersection(b)) / max(1, len(a))
+    return overlap >= min_overlap
+
+
+# =====================================================
 # Main endpoint
 # =====================================================
 
@@ -272,13 +308,74 @@ def query_docs(payload: QueryRequest):
             "debug": debug_payload if payload.debug else None,
         }
 
-    answer = generate_answer(rewritten_query, relevant)
+    # Defensive guard — should never hit Direct Answer with empty relevant
+
+    if not relevant:
+        return {
+            "query": original_query,
+            "mode": "hard_refusal",
+            "answer": refusal_message("no_chunks"),
+            "citations": [],
+            "debug": debug_payload if payload.debug else None,
+        }
+
+    # -------------------------
+    # Direct Answer (Primary PDF only)
+    # -------------------------
+    primary_source = min(relevant, key=lambda r: r["score"])["source"]
+    primary_contexts = [r for r in relevant if r["source"] == primary_source]
+
+    answer = generate_answer(rewritten_query, primary_contexts)
     state["last_successful_query"] = original_query
+
+    # -------------------------
+    # Additional resources (redundant confirmations)
+    # -------------------------
+    additional_resources = []
+    seen_sources = {primary_source}
+
+    # Consider other sources that also passed threshold (already ensured by passed_threshold)
+    for r in relevant:
+        src = r["source"]
+        if src in seen_sources:
+            continue
+        seen_sources.add(src)
+
+        sent = _best_sentence_from_chunk(r["content"])
+        if not sent:
+            continue
+
+        # Deterministic redundancy check (no LLM, no synthesis)
+        if not _is_redundant_confirmation(answer, sent, min_overlap=0.6):
+            continue
+
+        additional_resources.append({
+            "highlight": sent,
+            "source": r["source"],
+            "page": r["page"],
+        })
+
+        if len(additional_resources) >= 5:
+            break
+
+    # Citations should include primary + any additional confirmations
+    citations = dedupe_citations(primary_contexts) + citations_from_bullets(additional_resources)
+    # Deduplicate citations list (safe)
+    seen = set()
+    deduped = []
+    for c in citations:
+        key = (c["source"], c["page"])
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(c)
 
     return {
         "query": original_query,
         "mode": "direct_answer",
         "answer": answer,
-        "citations": dedupe_citations(relevant),
+        "citations": deduped,
+        "additional_resources": additional_resources,
         "debug": debug_payload if payload.debug else None,
     }
+

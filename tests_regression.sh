@@ -1,7 +1,9 @@
 #!/bin/bash
 
 set -e
-export CI=true
+export CI=${CI:-true}
+
+# To run LOCAL retrieval tests: CI=false ./tests_regression.sh
 
 BASE_URL="http://127.0.0.1:8001/query"
 HEADER="Content-Type: application/json"
@@ -74,6 +76,19 @@ RESP=$(curl -s -X POST $BASE_URL \
 echo "$RESP"
 echo "$RESP" | jq -e '.mode == "hard_refusal"' > /dev/null
 echo "$RESP" | jq -e '.answer | test("reset")' > /dev/null
+
+if [ "${CI}" != "true" ]; then
+  echo "===== LOCAL TEST: Additional Resources ====="
+  RESP=$(curl -s -X POST $BASE_URL -H "$HEADER" -d '{
+    "query": "What are Volvo’s core values?",
+    "conversation_id": "t_local_multi"
+  }')
+  echo "$RESP"
+  echo "$RESP" | jq -e '.mode == "direct_answer"' > /dev/null
+  # additional_resources may be empty depending on docs; we only assert field exists
+  echo "$RESP" | jq -e 'has("additional_resources")' > /dev/null
+fi
+
 
 
 echo "✅ ALL TESTS PASSED"
