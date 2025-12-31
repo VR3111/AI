@@ -1,11 +1,54 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
+from typing import Optional
 import re
+import uuid
+
+from datetime import datetime, timezone
 
 from app.llm import generate_answer
 from app.retrieve import retrieve, dedupe_results, MAX_DISTANCE
 
+from app.ingest_api import router as ingest_router
+
+
 app = FastAPI(title="Internal Assistant API")
+
+# Mount ingestion API (tenant-aware document upload & indexing)
+app.include_router(ingest_router)
+
+# =====================================================
+# Helpers: contract wrapper
+# =====================================================
+
+def now_iso():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def wrap_response(
+    *,
+    tenant_id: str,
+    conversation_id: str,
+    query: str,
+    mode: str,
+    answer: str,
+    citations: list,
+    artifacts: dict,
+    debug: dict | None,
+):
+    return {
+        "request_id": str(uuid.uuid4()),
+        "created_at": now_iso(),
+        "tenant_id": tenant_id,
+        "conversation_id": conversation_id,
+        "query": query,
+        "mode": mode,
+        "answer": answer,
+        "citations": citations,
+        "artifacts": artifacts,
+        "debug": debug,
+    }
+
 
 # =====================================================
 # Citation helpers
@@ -19,7 +62,14 @@ def dedupe_citations(relevant_chunks):
         if key in seen:
             continue
         seen.add(key)
-        unique.append({"source": r["source"], "page": r["page"]})
+        unique.append({
+            "source_id": None,
+            "source_name": r["source"],
+            "page": r["page"],
+            "chunk_id": None,
+            "quote": None,
+            "doc_hash": None,
+        })
     return unique
 
 
@@ -30,7 +80,14 @@ def citations_from_bullets(bullets):
         key = (b["source"], b["page"])
         if key not in seen:
             seen.add(key)
-            out.append({"source": b["source"], "page": b["page"]})
+            out.append({
+                "source_id": None,
+                "source_name": b["source"],
+                "page": b["page"],
+                "chunk_id": None,
+                "quote": None,
+                "doc_hash": None,
+            })
     return out
 
 
@@ -94,6 +151,8 @@ def is_reset_query(query: str) -> bool:
 def refusal_message(reason: str) -> str:
     if reason == "no_chunks":
         return "Please provide more context so I can answer accurately."
+    if reason == "reset":
+        return "Context has been reset. Please ask a new question."
     return "The documents do not answer this question."
 
 
@@ -103,9 +162,12 @@ def refusal_message(reason: str) -> str:
 
 conversation_store = {}
 
+
 class QueryRequest(BaseModel):
     query: str
     conversation_id: str
+    # Optional for backward compatibility (CI / CLI)
+    tenant_id: Optional[str] = None
     debug: bool = False
 
 
@@ -172,42 +234,6 @@ def build_bullet_highlights(relevant, max_items: int = 4, min_len: int = 40):
 
 
 # =====================================================
-# Implement “Additional resources” for Direct Answer
-# =====================================================
-
-_STOPWORDS = {
-    "the","a","an","and","or","to","of","in","on","for","with","as","at","by",
-    "is","are","was","were","be","been","being","this","that","these","those",
-    "it","its","their","they","them","from","into","about","over","under",
-}
-
-def _tokenize(text: str) -> set[str]:
-    words = re.findall(r"[a-z0-9']+", text.lower())
-    return {w for w in words if w and w not in _STOPWORDS}
-
-def _best_sentence_from_chunk(content: str) -> str | None:
-    sent = _first_complete_sentence(content)
-    if not sent:
-        return None
-    # Keep it extractive and “statement-like”
-    if len(sent) < 25:
-        return None
-    return sent.strip()
-
-def _is_redundant_confirmation(
-    primary_answer: str,
-    candidate_sentence: str,
-    min_overlap: float = 0.6
-) -> bool:
-    a = _tokenize(primary_answer)
-    b = _tokenize(candidate_sentence)
-    if not a or not b:
-        return False
-    overlap = len(a.intersection(b)) / max(1, len(a))
-    return overlap >= min_overlap
-
-
-# =====================================================
 # Main endpoint
 # =====================================================
 
@@ -215,19 +241,25 @@ def _is_redundant_confirmation(
 def query_docs(payload: QueryRequest):
     original_query = payload.query
 
-    # -------- RESET CONTEXT (HARD CONTROL) --------
+    tenant_id = payload.tenant_id or "default"
+    conversation_id = payload.conversation_id
+
+    # -------- RESET CONTEXT --------
     if is_reset_query(original_query):
-        conversation_store.pop(payload.conversation_id, None)
-        return {
-            "query": original_query,
-            "mode": "hard_refusal",
-            "answer": "Context has been reset. Please ask a new question.",
-            "citations": [],
-            "debug": None,
-        }
+        conversation_store.pop((tenant_id, conversation_id), None)
+        return wrap_response(
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+            query=original_query,
+            mode="hard_refusal",
+            answer=refusal_message("reset"),
+            citations=[],
+            artifacts={"reason": "reset"},
+            debug=None,
+        )
 
     state = conversation_store.setdefault(
-        payload.conversation_id,
+        (tenant_id, conversation_id),
         {"last_successful_query": None}
     )
 
@@ -235,54 +267,62 @@ def query_docs(payload: QueryRequest):
     if len(original_query.split()) <= 6 and state["last_successful_query"]:
         rewritten_query = f"In the context of {state['last_successful_query']}, {original_query}"
 
-    # Vague query refusal
     if is_vague_query(original_query):
-        return {
-            "query": original_query,
-            "mode": "hard_refusal",
-            "answer": refusal_message("no_chunks"),
-            "citations": [],
-            "debug": None,
-        }
+        return wrap_response(
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+            query=original_query,
+            mode="hard_refusal",
+            answer=refusal_message("no_chunks"),
+            citations=[],
+            artifacts={"reason": "vague_query"},
+            debug=None,
+        )
 
-    # External comparison refusal
     if mentions_external_entity(original_query):
-        return {
-            "query": original_query,
-            "mode": "hard_refusal",
-            "answer": refusal_message("external_entity"),
-            "citations": [],
-            "debug": None,
-        }
+        return wrap_response(
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+            query=original_query,
+            mode="hard_refusal",
+            answer=refusal_message("external_entity"),
+            citations=[],
+            artifacts={"reason": "external_entity"},
+            debug=None,
+        )
 
-    # Retrieval
-    raw_results = retrieve(rewritten_query, k=6)
+    raw_results, retrieve_status = retrieve(
+        rewritten_query,
+        k=6,
+        tenant_id=tenant_id,
+        return_status=True
+    )
+
     results = dedupe_results(raw_results)
 
-    debug_payload = None
-    if payload.debug:
-        debug_payload = {
-            "original_query": original_query,
-            "rewritten_query": rewritten_query,
-            "max_distance_threshold": MAX_DISTANCE,
-            "retrieval_scores": [
-                {
-                    "source": doc.metadata.get("source"),
-                    "page": doc.metadata.get("page"),
-                    "score": round(score, 4),
-                }
-                for doc, score in results
-            ],
-        }
+    if retrieve_status == "no_documents_ingested":
+        return wrap_response(
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+            query=original_query,
+            mode="hard_refusal",
+            answer="There are no documents available yet to answer this question.",
+            citations=[],
+            artifacts={"reason": "no_documents_ingested"},
+            debug=None,
+        )
 
     if not results:
-        return {
-            "query": original_query,
-            "mode": "hard_refusal",
-            "answer": refusal_message("no_chunks"),
-            "citations": [],
-            "debug": debug_payload if payload.debug else None,
-        }
+        return wrap_response(
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+            query=original_query,
+            mode="hard_refusal",
+            answer=refusal_message("no_chunks"),
+            citations=[],
+            artifacts={"reason": "no_chunks"},
+            debug=None,
+        )
 
     best_score = min(score for _, score in results)
     passed_threshold = best_score <= MAX_DISTANCE
@@ -299,83 +339,35 @@ def query_docs(payload: QueryRequest):
 
     if is_explanatory_query(original_query) or not passed_threshold:
         bullets = build_bullet_highlights(relevant)
-        return {
-            "query": original_query,
-            "mode": "guided_fallback",
-            "no_direct_answer_reason": "No direct answer was found in the documents for this question.",
-            "related_highlights": bullets,
-            "citations": citations_from_bullets(bullets),
-            "debug": debug_payload if payload.debug else None,
-        }
+        return wrap_response(
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+            query=original_query,
+            mode="guided_fallback",
+            answer="",
+            citations=citations_from_bullets(bullets),
+            artifacts={
+                "reason": "No direct answer was found in the documents for this question.",
+                "related_highlights": bullets,
+            },
+            debug=None,
+        )
 
-    # Defensive guard — should never hit Direct Answer with empty relevant
-
-    if not relevant:
-        return {
-            "query": original_query,
-            "mode": "hard_refusal",
-            "answer": refusal_message("no_chunks"),
-            "citations": [],
-            "debug": debug_payload if payload.debug else None,
-        }
-
-    # -------------------------
-    # Direct Answer (Primary PDF only)
-    # -------------------------
     primary_source = min(relevant, key=lambda r: r["score"])["source"]
     primary_contexts = [r for r in relevant if r["source"] == primary_source]
 
     answer = generate_answer(rewritten_query, primary_contexts)
     state["last_successful_query"] = original_query
 
-    # -------------------------
-    # Additional resources (redundant confirmations)
-    # -------------------------
-    additional_resources = []
-    seen_sources = {primary_source}
+    citations = dedupe_citations(primary_contexts)
 
-    # Consider other sources that also passed threshold (already ensured by passed_threshold)
-    for r in relevant:
-        src = r["source"]
-        if src in seen_sources:
-            continue
-        seen_sources.add(src)
-
-        sent = _best_sentence_from_chunk(r["content"])
-        if not sent:
-            continue
-
-        # Deterministic redundancy check (no LLM, no synthesis)
-        if not _is_redundant_confirmation(answer, sent, min_overlap=0.6):
-            continue
-
-        additional_resources.append({
-            "highlight": sent,
-            "source": r["source"],
-            "page": r["page"],
-        })
-
-        if len(additional_resources) >= 5:
-            break
-
-    # Citations should include primary + any additional confirmations
-    citations = dedupe_citations(primary_contexts) + citations_from_bullets(additional_resources)
-    # Deduplicate citations list (safe)
-    seen = set()
-    deduped = []
-    for c in citations:
-        key = (c["source"], c["page"])
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(c)
-
-    return {
-        "query": original_query,
-        "mode": "direct_answer",
-        "answer": answer,
-        "citations": deduped,
-        "additional_resources": additional_resources,
-        "debug": debug_payload if payload.debug else None,
-    }
-
+    return wrap_response(
+        tenant_id=tenant_id,
+        conversation_id=conversation_id,
+        query=original_query,
+        mode="direct_answer",
+        answer=answer,
+        citations=citations,
+        artifacts={"additional_resources": []},
+        debug=None,
+    )

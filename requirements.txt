@@ -4,3 +4,4 @@ langchain-community
 langchain-huggingface
 chromadb
 sentence-transformers
+python-multipart
