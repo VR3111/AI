@@ -60,6 +60,7 @@ P1 uses **Bearer JWT authentication**.
 
 Authorization: Bearer <JWT>
 
+
 - JWTs must include a `tenant_id` claim
 - Tokens are **verified**, not generated, by P1
 - Missing or invalid tokens result in **401**
@@ -79,11 +80,13 @@ data/
 └── tenants/
 └── <tenant_id>/
 ├── docs/
-└── chroma/
+├── chroma/
+└── p1.db
 
 
 - Each tenant has isolated documents
 - Each tenant has its own vector store
+- Each tenant has its own persistence database
 - No global retrieval
 - No cross-tenant leakage
 
@@ -126,14 +129,27 @@ Requires:
 - conversation_id
 - query
 
-Returns one of:
+Returns exactly one of:
 - direct_answer
 - guided_fallback
 - hard_refusal
 
 ---
 
-### Document Management (v1.4)
+### Read APIs (UI-Critical)
+
+GET /conversations
+GET /conversations/{conversation_id}
+
+
+- Returns persisted conversation history
+- Tenant-scoped
+- Read-only
+- Authentication required
+
+---
+
+### Document Management
 
 POST /tenants/{tenant_id}/documents
 POST /tenants/{tenant_id}/documents/index
@@ -143,6 +159,20 @@ DELETE /tenants/{tenant_id}/documents/{filename}
 
 - Tenant in the path **must match** the tenant in the JWT
 - Upload ≠ Index (by design)
+
+---
+
+## Persistence (Implemented)
+
+P1 persists all query interactions.
+
+- Per-tenant SQLite database
+- Conversations and queries stored
+- Restart-safe
+- Multi-worker safe
+- No in-memory conversation state
+
+Persistence is **best-effort** and **never blocks query execution**.
 
 ---
 
@@ -160,13 +190,14 @@ The CLI is **not** a product UI.
 
 ---
 
-## What Is Implemented So Far (v1.4)
+## What Is Implemented (Backend Core Complete)
 
 - Document-faithful query engine (frozen)
 - Deterministic refusal behavior
 - Tenant-aware retrieval
 - Explicit document ingestion & indexing
-- Per-tenant document management
+- Per-tenant persistence (conversations & queries)
+- Read APIs for UI consumption
 - JWT-based authentication & tenant binding
 - CI-safe refusal-only testing
 
@@ -176,13 +207,13 @@ The CLI is **not** a product UI.
 
 These are **planned**, not missing:
 
-- Persistence of conversations & messages
 - Metrics & observability
 - UI
 - Background ingestion workers
 - Auto-index on upload
+- Role-based access control (RBAC)
 
-Each will be added **without changing core semantics**.
+All future features will wrap around the core without changing semantics.
 
 ---
 
@@ -202,19 +233,21 @@ P1 is:
 
 ## Versioning
 
-- Current release: **v1.4**
-- Core decision engine is **frozen**
-- All future work wraps around the core
+- Current release tag: **p1-v1-backend-core-complete**
+- Backend core is **frozen**
+- All future backend changes are v2+
 
 ---
 
-## Next Planned Releases (High-Level)
+## Next Planned Work (High-Level)
 
-- v1.5: Persistence (conversations, messages)
-- v1.6: Observability (metrics, logs)
-- v1.7+: UI (strict API consumer)
+- UI (strict API consumer)
+- Observability
+- Controlled production rollout
 
 ---
 
 If you’re reading this README and thinking  
-“this system refuses a lot” — that’s the point.
+“this system refuses a lot” —> THATS THE POINT!!!!!
+
+
