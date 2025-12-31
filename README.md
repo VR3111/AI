@@ -50,6 +50,27 @@ P1 enforces these guarantees at the API level:
 
 ---
 
+## Authentication (Required)
+
+All API endpoints (except `/health`) require authentication.
+
+P1 uses **Bearer JWT authentication**.
+
+- Requests **must** include an `Authorization` header:
+
+Authorization: Bearer <JWT>
+
+- JWTs must include a `tenant_id` claim
+- Tokens are **verified**, not generated, by P1
+- Missing or invalid tokens result in **401**
+- Tenant mismatches result in **403**
+
+The tenant context is derived **exclusively from the token**.
+
+Request payloads or parameters **cannot override** the authenticated tenant.
+
+---
+
 ## Tenant Model
 
 P1 is **tenant-aware by design**.
@@ -61,12 +82,10 @@ data/
 └── chroma/
 
 
-
 - Each tenant has isolated documents
 - Each tenant has its own vector store
 - No global retrieval
 - No cross-tenant leakage
-
 
 ---
 
@@ -101,8 +120,9 @@ If no documents are indexed:
 
 POST /query
 
+
 Requires:
-- tenant_id
+- Authorization header (Bearer JWT)
 - conversation_id
 - query
 
@@ -121,7 +141,8 @@ GET /tenants/{tenant_id}/documents
 DELETE /tenants/{tenant_id}/documents/{filename}
 
 
-Upload ≠ Index (by design).
+- Tenant in the path **must match** the tenant in the JWT
+- Upload ≠ Index (by design)
 
 ---
 
@@ -133,6 +154,7 @@ P1 includes a thin CLI for development and testing.
 - No logic
 - No retries
 - No interpretation
+- Requires `P1_AUTH_TOKEN` to be set
 
 The CLI is **not** a product UI.
 
@@ -145,6 +167,7 @@ The CLI is **not** a product UI.
 - Tenant-aware retrieval
 - Explicit document ingestion & indexing
 - Per-tenant document management
+- JWT-based authentication & tenant binding
 - CI-safe refusal-only testing
 
 ---
@@ -153,7 +176,6 @@ The CLI is **not** a product UI.
 
 These are **planned**, not missing:
 
-- Authentication / authorization
 - Persistence of conversations & messages
 - Metrics & observability
 - UI
@@ -188,10 +210,9 @@ P1 is:
 
 ## Next Planned Releases (High-Level)
 
-- v1.5: Authentication & tenant binding
-- v1.6: Persistence (conversations, messages)
-- v1.7: Observability (metrics, logs)
-- v1.8+: UI (strict API consumer)
+- v1.5: Persistence (conversations, messages)
+- v1.6: Observability (metrics, logs)
+- v1.7+: UI (strict API consumer)
 
 ---
 

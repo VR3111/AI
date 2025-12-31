@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import FastAPI
+from fastapi import Request
 from pydantic import BaseModel
 
 from app.llm import generate_answer
@@ -16,6 +17,9 @@ from app.retrieve import retrieve, dedupe_results, MAX_DISTANCE
 CI_MODE = os.getenv("CI") == "true"
 
 app = FastAPI(title="Internal Assistant API")
+
+from app.auth import auth_middleware
+auth_middleware(app)
 
 # -----------------------------------------------------
 # Health (always available)
@@ -114,9 +118,9 @@ def refusal_message(reason: str) -> str:
 # Main Query Endpoint
 # =====================================================
 @app.post("/query")
-def query_docs(payload: QueryRequest):
+def query_docs(payload: QueryRequest, request: Request):
     original_query = payload.query
-    tenant_id = payload.tenant_id or "default"
+    tenant_id = request.state.tenant_id
     conversation_id = payload.conversation_id
 
     if is_reset_query(original_query):
