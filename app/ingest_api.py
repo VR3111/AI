@@ -31,9 +31,8 @@ def _tenant_docs_path(tenant_id: str) -> str:
 def upload_document(tenant_id: str, file: UploadFile = File(...)):
     """
     Uploads a PDF for a tenant.
-    - Storage only (NO indexing)
-    - Preserves filename
-    - Rejects non-PDFs
+    - Stores file
+    - Automatically indexes all documents
     """
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
@@ -50,19 +49,26 @@ def upload_document(tenant_id: str, file: UploadFile = File(...)):
         )
 
     try:
+        # Store file
         with open(dest_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
+
+        # Auto-index (all docs for tenant)
+        chunks = load_and_chunk(tenant_id)
+        store_vectors(tenant_id, chunks)
+
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail="Failed to store uploaded file.") from e
+        raise HTTPException(status_code=500, detail="Failed to upload or index document.") from e
 
     return {
         "tenant_id": tenant_id,
         "filename": file.filename,
         "stored_path": dest_path,
-        "indexed": False,
-        "message": "File uploaded successfully. Call the index endpoint to make it searchable.",
+        "indexed": True,
+        "message": "File uploaded and indexed successfully.",
     }
-
 
 # =====================================================
 # List documents (UI-critical)
