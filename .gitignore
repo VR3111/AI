@@ -1,7 +1,17 @@
-cat <<EOF > .gitignore
+# Python
 venv/
 __pycache__/
+
+# Runtime data
+data/
+data/tenants/
 data/chroma.sqlite3
 data/chroma/
+
+# Node / Frontend
+node_modules/
+ui/node_modules/
+
+# Env files
 .env
-EOF
+.env.local
