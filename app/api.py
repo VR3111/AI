@@ -3,7 +3,11 @@ import re
 import uuid
 import sqlite3
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, Any
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
@@ -22,6 +26,7 @@ app = FastAPI(title="Internal Assistant API")
 app.include_router(read_router)
 
 from app.auth import auth_middleware
+
 auth_middleware(app)
 
 # -----------------------------------------------------
@@ -31,12 +36,15 @@ auth_middleware(app)
 def health_check():
     return {"status": "ok"}
 
+
 # -----------------------------------------------------
 # Ingestion API (DISABLED IN CI)
 # -----------------------------------------------------
 if not CI_MODE:
     from app.ingest_api import router as ingest_router
+
     app.include_router(ingest_router)
+
 
 # =====================================================
 # Helpers
@@ -140,13 +148,20 @@ def mentions_external_entity(query: str) -> bool:
 
 def is_vague_query(query: str) -> bool:
     return query.strip().lower() in {
-        "tell me more", "explain more", "more details", "continue", "go on"
+        "tell me more",
+        "explain more",
+        "more details",
+        "continue",
+        "go on",
     }
 
 
 def is_reset_query(query: str) -> bool:
     return query.strip().lower() in {
-        "new topic", "reset", "clear context", "start over"
+        "new topic",
+        "reset",
+        "clear context",
+        "start over",
     }
 
 
@@ -159,6 +174,23 @@ def refusal_message(reason: str) -> str:
     if reason == "reset":
         return "Context has been reset. Please ask a new question."
     return "The documents do not answer this question."
+
+
+# =====================================================
+# Citations builder
+# =====================================================
+def build_citations(results: list[tuple[Any, float]]) -> list[dict]:
+    citations: list[dict] = []
+    for doc, score in results:
+        citations.append(
+            {
+                "source": doc.metadata.get("source"),
+                "page": doc.metadata.get("page"),
+                "score": score,
+                "snippet": (doc.page_content or "")[:300],
+            }
+        )
+    return citations
 
 
 # =====================================================
@@ -181,7 +213,7 @@ def query_docs(payload: QueryRequest, request: Request):
                 answer=refusal_message("reset"),
                 citations=[],
                 artifacts={"reason": "reset"},
-                debug=None,
+                debug={"reset": True} if payload.debug else None,
             )
         )
 
@@ -205,7 +237,7 @@ def query_docs(payload: QueryRequest, request: Request):
                 answer=refusal_message("no_chunks"),
                 citations=[],
                 artifacts={"reason": "vague_query"},
-                debug=None,
+                debug={"reason": "vague_query"} if payload.debug else None,
             )
         )
 
@@ -219,7 +251,7 @@ def query_docs(payload: QueryRequest, request: Request):
                 answer=refusal_message("external_entity"),
                 citations=[],
                 artifacts={"reason": "external_entity"},
-                debug=None,
+                debug={"reason": "external_entity"} if payload.debug else None,
             )
         )
 
@@ -239,7 +271,7 @@ def query_docs(payload: QueryRequest, request: Request):
                 answer="There are no documents available yet to answer this question.",
                 citations=[],
                 artifacts={"reason": "no_documents_ingested"},
-                debug=None,
+                debug={"status": status} if payload.debug else None,
             )
         )
 
@@ -253,11 +285,23 @@ def query_docs(payload: QueryRequest, request: Request):
                 answer=refusal_message("no_chunks"),
                 citations=[],
                 artifacts={"reason": "no_chunks"},
-                debug=None,
+                debug={
+                    "status": status,
+                    "rewritten_query": rewritten_query,
+                    "results_count": 0,
+                }
+                if payload.debug
+                else None,
             )
         )
 
     best_score = min(score for _, score in results)
+    citations = build_citations(results)
+
+    # ---------------- fallback logic ----------------
+    # IMPORTANT CHANGE:
+    # - If we HAVE chunks, we should NOT return blank answer.
+    # - We will still show citations + chunk evidence.
     if is_explanatory_query(original_query) or best_score > MAX_DISTANCE:
         return persist_and_return(
             wrap_response(
@@ -265,21 +309,31 @@ def query_docs(payload: QueryRequest, request: Request):
                 conversation_id=conversation_id,
                 query=original_query,
                 mode="guided_fallback",
-                answer="",
-                citations=[],
-                artifacts={"reason": "No direct answer was found in the documents for this question."},
-                debug=None,
+                answer="No direct answer was found verbatim in the documents. Try asking more specifically, or use keywords from the document.",
+                citations=citations,
+                artifacts={
+                    "reason": "No direct answer was found in the documents for this question.",
+                    "best_score": best_score,
+                },
+                debug={
+                    "rewritten_query": rewritten_query,
+                    "best_score": best_score,
+                    "max_distance": MAX_DISTANCE,
+                    "results_count": len(results),
+                }
+                if payload.debug
+                else None,
             )
         )
 
     # ---------------- direct answer ----------------
     contexts = [
-    {
-        "content": doc.page_content,
-        "source": doc.metadata.get("source"),
-        "page": doc.metadata.get("page"),
-    }
-    for doc, _score in results
+        {
+            "content": doc.page_content,
+            "source": doc.metadata.get("source"),
+            "page": doc.metadata.get("page"),
+        }
+        for doc, _score in results
     ]
 
     answer = generate_answer(rewritten_query, contexts)
@@ -291,8 +345,15 @@ def query_docs(payload: QueryRequest, request: Request):
             query=original_query,
             mode="direct_answer",
             answer=answer,
-            citations=[],
-            artifacts={"additional_resources": []},
-            debug=None,
+            citations=citations,
+            artifacts={"additional_resources": [], "best_score": best_score},
+            debug={
+                "rewritten_query": rewritten_query,
+                "best_score": best_score,
+                "max_distance": MAX_DISTANCE,
+                "results_count": len(results),
+            }
+            if payload.debug
+            else None,
         )
     )

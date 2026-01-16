@@ -1,14 +1,19 @@
 import os
 import shutil
+import logging
 from datetime import datetime
 from fastapi import APIRouter, UploadFile, File, HTTPException
 
 from app.store_vectors import load_and_chunk, store_vectors
 
 # =====================================================
+# Logger
+# =====================================================
+logger = logging.getLogger("p1.ingest")
+
+# =====================================================
 # Router
 # =====================================================
-
 router = APIRouter(prefix="/tenants", tags=["ingestion"])
 
 DATA_ROOT = "data"
@@ -26,7 +31,6 @@ def _tenant_docs_path(tenant_id: str) -> str:
 # =====================================================
 # Upload document (storage only)
 # =====================================================
-
 @router.post("/{tenant_id}/documents")
 def upload_document(tenant_id: str, file: UploadFile = File(...)):
     """
@@ -45,7 +49,7 @@ def upload_document(tenant_id: str, file: UploadFile = File(...)):
     if os.path.exists(dest_path):
         raise HTTPException(
             status_code=409,
-            detail=f"Document '{file.filename}' already exists for this tenant."
+            detail=f"Document '{file.filename}' already exists for this tenant.",
         )
 
     try:
@@ -59,8 +63,15 @@ def upload_document(tenant_id: str, file: UploadFile = File(...)):
 
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Failed to upload or index document.") from e
+    except Exception:
+        logger.exception(
+            "Upload/index failed",
+            extra={"tenant_id": tenant_id, "filename": getattr(file, "filename", None)},
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to upload or index document.",
+        )
 
     return {
         "tenant_id": tenant_id,
@@ -70,10 +81,10 @@ def upload_document(tenant_id: str, file: UploadFile = File(...)):
         "message": "File uploaded and indexed successfully.",
     }
 
+
 # =====================================================
 # List documents (UI-critical)
 # =====================================================
-
 @router.get("/{tenant_id}/documents")
 def list_documents(tenant_id: str):
     """
@@ -98,11 +109,13 @@ def list_documents(tenant_id: str):
         file_path = os.path.join(docs_path, filename)
         stat = os.stat(file_path)
 
-        documents.append({
-            "filename": filename,
-            "size_bytes": stat.st_size,
-            "uploaded_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
-        })
+        documents.append(
+            {
+                "filename": filename,
+                "size_bytes": stat.st_size,
+                "uploaded_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            }
+        )
 
     return {
         "tenant_id": tenant_id,
@@ -113,7 +126,6 @@ def list_documents(tenant_id: str):
 # =====================================================
 # Delete document (storage only)
 # =====================================================
-
 @router.delete("/{tenant_id}/documents/{filename}")
 def delete_document(tenant_id: str, filename: str):
     """
@@ -131,13 +143,17 @@ def delete_document(tenant_id: str, filename: str):
     if not os.path.isfile(file_path):
         raise HTTPException(
             status_code=404,
-            detail=f"Document '{filename}' not found for this tenant."
+            detail=f"Document '{filename}' not found for this tenant.",
         )
 
     try:
         os.remove(file_path)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Failed to delete document.") from e
+    except Exception:
+        logger.exception(
+            "Delete document failed",
+            extra={"tenant_id": tenant_id, "filename": filename},
+        )
+        raise HTTPException(status_code=500, detail="Failed to delete document.")
 
     return {
         "tenant_id": tenant_id,
@@ -150,7 +166,6 @@ def delete_document(tenant_id: str, filename: str):
 # =====================================================
 # Index documents (explicit action)
 # =====================================================
-
 @router.post("/{tenant_id}/documents/index")
 def index_documents(tenant_id: str):
     """
@@ -163,7 +178,7 @@ def index_documents(tenant_id: str):
     if not os.path.isdir(docs_path):
         raise HTTPException(
             status_code=404,
-            detail="No documents found for this tenant. Upload documents first."
+            detail="No documents found for this tenant. Upload documents first.",
         )
 
     try:
@@ -171,8 +186,12 @@ def index_documents(tenant_id: str):
         store_vectors(tenant_id, chunks)
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Failed to index documents.") from e
+    except Exception:
+        logger.exception(
+            "Indexing failed",
+            extra={"tenant_id": tenant_id, "docs_path": docs_path},
+        )
+        raise HTTPException(status_code=500, detail="Failed to index documents.")
 
     return {
         "tenant_id": tenant_id,

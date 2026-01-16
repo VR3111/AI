@@ -3,7 +3,7 @@ import os
 CI_MODE = os.getenv("CI") == "true"
 
 DB_PATH = "data"
-MAX_DISTANCE = 0.60  # derived from observed scores
+MAX_DISTANCE = 0.65  # derived from observed scores
 
 TENANTS_ROOT = os.path.join(DB_PATH, "tenants")
 
