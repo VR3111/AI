@@ -30,7 +30,7 @@ const DEFAULT_TENANT_ID = 'acme';
 // 🔴 Keep "Bearer " prefix
 
 const DEV_JWT =
-  'Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ0ZW5hbnRfaWQiOiJhY21lIiwiaWF0IjoxNzY5OTU1NjEwLCJleHAiOjE3NzI1NDc2MTB9.F5YFM5zIod5lK-VXnHauoqXZpuRsP4vVEUE-DvQK0Zs';
+  'Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ0ZW5hbnRfaWQiOiJhY21lIiwiaWF0IjoxNzY5OTU4NzQxLCJleHAiOjE3NzI1NTA3NDF9.-wQlj6M3-wsUa_QLCsyfM70IDE_dAtuEujoizJb_SHk';
 
 // =====================================================
 // Mock auth state (UI-level only)
