@@ -1,20 +1,27 @@
+# macOS
+.DS_Store
+
 # Python
 venv/
 __pycache__/
 
-# Runtime data
+# Runtime data (NEVER commit)
 data/
 data/tenants/
 data/chroma.sqlite3
 data/chroma/
 
 # Node / Frontend
-ui/.next
 node_modules/
 ui/node_modules/
+ui/dist/
+ui/lib/
+
+# Build / tooling
+ui/.next
+ui/.vite
+dist/
 
 # Env files
 .env
 .env.local
-
-echo ".DS_Store" >> .gitignore
