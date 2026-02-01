@@ -18,7 +18,9 @@ import {
 // =====================================================
 // Configuration
 // =====================================================
-const API_BASE_URL = '/api';
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
+
 const DEFAULT_TENANT_ID = 'acme';
 
 // =====================================================
@@ -26,8 +28,9 @@ const DEFAULT_TENANT_ID = 'acme';
 // =====================================================
 // 🔴 Replace this with a VALID JWT generated according to app/auth.py
 // 🔴 Keep "Bearer " prefix
+
 const DEV_JWT =
-  'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0ZW5hbnRfaWQiOiJhY21lIn0.gQb7L0TmQahooswcDduYxwV8aHUshjTjyErUBMt8PWs';
+  'Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ0ZW5hbnRfaWQiOiJhY21lIiwiaWF0IjoxNzY5OTU1NjEwLCJleHAiOjE3NzI1NDc2MTB9.F5YFM5zIod5lK-VXnHauoqXZpuRsP4vVEUE-DvQK0Zs';
 
 // =====================================================
 // Mock auth state (UI-level only)
@@ -43,6 +46,8 @@ async function apiCall<T>(
 ): Promise<T> {
   const url = `${API_BASE_URL}${endpoint}`;
 
+  console.log("API_CALL_START", { url, options });
+
   const response = await fetch(url, {
     ...options,
     headers: {
@@ -52,9 +57,16 @@ async function apiCall<T>(
     },
   });
 
+  console.log("API_CALL_RESPONSE", response.status, response.ok);
+
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`API error: ${response.status} - ${errorText}`);
+    throw {
+      status: response.status,
+      body: errorText,
+      url,
+      endpoint,
+    };
   }
 
   return response.json();
@@ -63,9 +75,21 @@ async function apiCall<T>(
 // =====================================================
 // Conversation helpers
 // =====================================================
+
 function generateConversationId(): string {
-  return 'conv_' + crypto.randomUUID();
+  return (
+    'conv_' +
+    (crypto.randomUUID?.() ??
+      Date.now().toString(36) +
+        Math.random().toString(36).slice(2))
+  );
 }
+
+
+//function generateConversationId(): string {
+//  return 'conv_' + crypto.randomUUID();
+//}
+
 
 let currentConversationId: string | null = null;
 
@@ -82,16 +106,28 @@ export const api = {
     currentAuthState = state;
   },
 
+  getAuthHeader(): string {
+    return DEV_JWT;
+  },
+
   // ---------------- Query ----------------
+
   async submitQuery(query: string, conversationId?: string): Promise<QueryResponse> {
-    const convId = conversationId || currentConversationId || generateConversationId();
+  console.log("SUBMIT_QUERY_FN_ENTER", { query, conversationId });
 
-    if (!conversationId) {
-      currentConversationId = convId;
-    }
+  const convId =
+    conversationId || currentConversationId || generateConversationId();
 
-    return apiCall<QueryResponse>('/query', {
-      method: 'POST',
+  console.log("SUBMIT_QUERY_CONV_ID", convId);
+
+  if (!conversationId) {
+    currentConversationId = convId;
+  }
+
+  try {
+    console.log("SUBMIT_QUERY_BEFORE_APICALL", "/query");
+    const res = await apiCall<QueryResponse>("/query", {
+      method: "POST",
       body: JSON.stringify({
         query,
         conversation_id: convId,
@@ -99,7 +135,14 @@ export const api = {
         debug: false,
       }),
     });
-  },
+    console.log("SUBMIT_QUERY_AFTER_APICALL", res);
+    return res;
+  } catch (err) {
+    console.error("SUBMIT_QUERY_CATCH_ERR", err);
+    throw err;
+  }
+},
+
 
   resetConversation() {
     currentConversationId = null;
@@ -112,11 +155,9 @@ export const api = {
   // ---------------- Conversations ----------------
   async listConversations(): Promise<Conversation[]> {
     try {
-      const response = await apiCall<ConversationsListResponse>('/conversations');
+      const response =
+        await apiCall<ConversationsListResponse>('/conversations');
 
-      // IMPORTANT:
-      // Backend list endpoint returns metadata only (no turns).
-      // UI components expect `turns` to exist, so we attach empty array.
       return response.conversations.map((conv) => ({
         conversation_id: conv.conversation_id,
         created_at: conv.created_at,
@@ -129,15 +170,21 @@ export const api = {
     }
   },
 
-  async getConversation(conversationId: string): Promise<Conversation | null> {
+  async getConversation(
+    conversationId: string
+  ): Promise<Conversation | null> {
     try {
       const response = await apiCall<ConversationDetail>(
         `/conversations/${conversationId}`
       );
 
       const turns: ConversationTurn[] = response.items.map((item) => {
-        const citations = item.citations_json ? JSON.parse(item.citations_json) : [];
-        const artifacts = item.artifacts_json ? JSON.parse(item.artifacts_json) : {};
+        const citations = item.citations_json
+          ? JSON.parse(item.citations_json)
+          : [];
+        const artifacts = item.artifacts_json
+          ? JSON.parse(item.artifacts_json)
+          : {};
 
         return {
           query: item.query,
@@ -151,14 +198,18 @@ export const api = {
             answer: item.answer,
             citations,
             artifacts,
-            debug: item.debug_json ? JSON.parse(item.debug_json) : null,
+            debug: item.debug_json
+              ? JSON.parse(item.debug_json)
+              : null,
           },
         };
       });
 
-      const created_at = response.items[0]?.created_at || new Date().toISOString();
+      const created_at =
+        response.items[0]?.created_at || new Date().toISOString();
       const last_activity_at =
-        response.items[response.items.length - 1]?.created_at || created_at;
+        response.items[response.items.length - 1]?.created_at ||
+        created_at;
 
       return {
         conversation_id: response.conversation_id,
@@ -208,7 +259,9 @@ export const api = {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`Upload failed: ${response.status} - ${errorText}`);
+      throw new Error(
+        `Upload failed: ${response.status} - ${errorText}`
+      );
     }
 
     return response.json();
