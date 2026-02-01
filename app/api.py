@@ -23,6 +23,19 @@ from app.read_api import router as read_router
 CI_MODE = os.getenv("CI") == "true"
 
 app = FastAPI(title="Internal Assistant API")
+
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # tighten later
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+
 app.include_router(read_router)
 
 from app.auth import auth_middleware
