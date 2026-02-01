@@ -77,32 +77,35 @@ function App() {
     toast.success("Started new conversation");
   };
 
+
   const handleSubmitQuery = async (query: string) => {
-    setIsProcessing(true);
-    setSubmittedQuery(query);
+    console.log("SUBMIT_QUERY_CALLED", query);
+    setIsProcessing(true); // safe to do BEFORE await
 
     try {
+      console.log("APP_BEFORE_AWAIT_SUBMIT_QUERY");
       const response = await api.submitQuery(query);
+
+      setSubmittedQuery(query);
       setCurrentResponse(response);
 
-      // ✅ Always treat query results as part of a conversation
       const convId = response.conversation_id;
 
-      // Switch to conversation view and load full turns from backend
       setSelectedConversationId(convId);
       setCurrentView("conversation");
 
       const conversationDetail = await api.getConversation(convId);
       setSelectedConversationDetail(conversationDetail);
 
-      // Reload conversations list (sidebar)
       await loadConversations();
     } catch (error) {
+      console.error("handleSubmitQuery failed", error);
       toast.error("Failed to process query");
     } finally {
       setIsProcessing(false);
     }
   };
+
 
   const handleUploadDocument = async (file: File) => {
     try {
@@ -172,6 +175,24 @@ function App() {
 
   return (
     <AuthGuard authState={authState}>
+
+      {/* 🔎 UI build marker — REMOVE AFTER DEBUG */}
+      <div
+        style={{
+          position: "fixed",
+          bottom: 4,
+          right: 8,
+          fontSize: 10,
+          opacity: 0.6,
+          zIndex: 9999,
+          pointerEvents: "none",
+        }}
+      >
+        UI-BUILD: 2026-01-26-A
+      </div>
+
+
+
       <div className="h-screen flex flex-col">
         <Toaster position="top-right" richColors />
 
