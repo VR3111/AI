@@ -14,6 +14,11 @@ EXEMPT_PATHS = {"/health"}
 def auth_middleware(app):
     @app.middleware("http")
     async def authenticate(request: Request, call_next):
+
+        # Allow CORS preflight to pass without auth
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
         if request.url.path in EXEMPT_PATHS:
             return await call_next(request)
 
@@ -28,7 +33,13 @@ def auth_middleware(app):
         token = auth.split(" ", 1)[1]
 
         try:
-            payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
+             payload = jwt.decode(
+	         token,
+                 JWT_SECRET,
+                 algorithms=[JWT_ALGO],
+                 options={"verify_aud": False}
+             )
+
         except JWTError:
             return JSONResponse(
                 status_code=401,
