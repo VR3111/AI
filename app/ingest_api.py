@@ -66,7 +66,10 @@ def upload_document(tenant_id: str, file: UploadFile = File(...)):
     except Exception:
         logger.exception(
             "Upload/index failed",
-            extra={"tenant_id": tenant_id, "filename": getattr(file, "filename", None)},
+            extra={
+                "tenant_id": tenant_id,
+                "uploaded_filename": getattr(file, "filename", None),
+            },
         )
         raise HTTPException(
             status_code=500,
@@ -151,7 +154,10 @@ def delete_document(tenant_id: str, filename: str):
     except Exception:
         logger.exception(
             "Delete document failed",
-            extra={"tenant_id": tenant_id, "filename": filename},
+            extra={
+                "tenant_id": tenant_id,
+                "uploaded_filename": filename,
+            },
         )
         raise HTTPException(status_code=500, detail="Failed to delete document.")
 
@@ -189,7 +195,9 @@ def index_documents(tenant_id: str):
     except Exception:
         logger.exception(
             "Indexing failed",
-            extra={"tenant_id": tenant_id, "docs_path": docs_path},
+            extra={
+                "tenant_id": tenant_id,
+            },
         )
         raise HTTPException(status_code=500, detail="Failed to index documents.")
 
@@ -198,3 +206,4 @@ def index_documents(tenant_id: str):
         "indexed": True,
         "message": "Documents indexed successfully.",
     }
+
