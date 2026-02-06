@@ -6,6 +6,7 @@ import { LeftSidebar } from "./LeftSidebar";
 interface MobileDrawerProps {
   isOpen: boolean;
   onClose: () => void;
+  onOpenSettings: () => void;
   conversations: Conversation[];
   documents: Document[];
   selectedConversationId: string | null;
@@ -23,6 +24,7 @@ interface MobileDrawerProps {
 export function MobileDrawer({
   isOpen,
   onClose,
+  onOpenSettings,
   conversations,
   documents,
   selectedConversationId,
@@ -203,11 +205,14 @@ export function MobileDrawer({
           onUploadDocument={onUploadDocument}
           onIndexDocument={onIndexDocument}
           onDeleteDocument={onDeleteDocument}
-          onOpenSettings={onClose}
+          onOpenSettings={() => {
+            onOpenSettings(); // open SettingsPanel
+            onClose(); // close drawer
+          }}
           isLoadingDocuments={isLoadingDocuments}
           isLoadingConversations={isLoadingConversations}
           isCollapsed={false}
-          onToggleCollapse={onClose} 
+          onToggleCollapse={onClose}
           showDocumentBadges={showDocumentBadges}
           confirmBeforeDelete={confirmBeforeDelete}
         />

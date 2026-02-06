@@ -274,6 +274,7 @@ function App() {
               onUploadDocument={handleUploadDocument}
               onIndexDocument={handleTriggerIndexing}
               onDeleteDocument={handleDeleteDocument}
+              onOpenSettings={() => setIsSettingsOpen(true)}
               isLoadingDocuments={isLoadingDocuments}
               isLoadingConversations={isLoadingConversations}
               isCollapsed={isSidebarCollapsed}
@@ -287,6 +288,7 @@ function App() {
           <MobileDrawer
             isOpen={isMobileDrawerOpen}
             onClose={() => setIsMobileDrawerOpen(false)}
+            onOpenSettings={() => setIsSettingsOpen(true)}
             conversations={conversations}
             documents={documents}
             selectedConversationId={selectedConversationId}
