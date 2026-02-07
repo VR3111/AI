@@ -20,6 +20,7 @@ interface LeftSidebarProps {
   onToggleCollapse?: () => void;
   showDocumentBadges?: boolean;
   confirmBeforeDelete?: boolean;
+  compactView?: boolean;
 }
 
 export function LeftSidebar({
@@ -38,6 +39,7 @@ export function LeftSidebar({
   onToggleCollapse,
   showDocumentBadges = true,
   confirmBeforeDelete = true,
+  compactView = false,
 }: LeftSidebarProps) {
   const [documentsExpanded, setDocumentsExpanded] = useState(true);
   const [conversationsExpanded, setConversationsExpanded] = useState(true);
@@ -326,7 +328,9 @@ export function LeftSidebar({
         <div className="border-b border-border/30">
           <button
             onClick={() => setDocumentsExpanded(!documentsExpanded)}
-            className="w-full flex items-center justify-between px-4 py-3 hover:bg-secondary/30 transition-all duration-200 group"
+            className={`w-full flex items-center justify-between px-4 ${
+              compactView ? "py-2" : "py-3"
+            } hover:bg-secondary/30 transition-all duration-200 group`}
           >
             <div className="flex items-center gap-2">
               <svg
@@ -374,7 +378,9 @@ export function LeftSidebar({
                     {displayedDocuments.map((doc) => (
                       <div
                         key={doc.filename}
-                        className="group bg-secondary/20 hover:bg-secondary/40 rounded-lg p-3 border border-border/20 hover:border-border/40 transition-all duration-200"
+                        className={`group bg-secondary/20 hover:bg-secondary/40 rounded-lg border border-border/20 hover:border-border/40 transition-all duration-200 ${
+                          compactView ? "p-2" : "p-3"
+                        }`}
                       >
                         <div className="flex items-start gap-2 mb-2">
                           <svg
@@ -526,7 +532,9 @@ export function LeftSidebar({
         <div>
           <button
             onClick={() => setConversationsExpanded(!conversationsExpanded)}
-            className="w-full flex items-center justify-between px-4 py-3 hover:bg-secondary/30 transition-all duration-200 group"
+            className={`w-full flex items-center justify-between px-4 ${
+              compactView ? "py-2" : "py-3"
+            } hover:bg-secondary/30 transition-all duration-200 group`}
           >
             <div className="flex items-center gap-2">
               <svg
@@ -605,7 +613,9 @@ export function LeftSidebar({
                           onClick={() =>
                             onSelectConversation(conversation.conversation_id)
                           }
-                          className={`w-full text-left p-3 rounded-lg transition-all duration-200 ${
+                          className={`w-full text-left rounded-lg transition-all duration-200 ${
+                            compactView ? "p-2" : "p-3"
+                          } ${
                             isSelected
                               ? "bg-primary/10 border border-primary/30 shadow-lg shadow-primary/5"
                               : "bg-secondary/20 hover:bg-secondary/40 border border-border/20 hover:border-border/40"

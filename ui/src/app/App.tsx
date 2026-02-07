@@ -14,12 +14,17 @@ type View = "query" | "conversation";
 
 function App() {
   const [authState, setAuthState] = useState(api.getAuthState());
-  const [currentResponse, setCurrentResponse] = useState<QueryResponse | null>(null);
+  const [currentResponse, setCurrentResponse] = useState<QueryResponse | null>(
+    null
+  );
   const [isProcessing, setIsProcessing] = useState(false);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
-  const [selectedConversationDetail, setSelectedConversationDetail] = useState<Conversation | null>(null);
+  const [selectedConversationId, setSelectedConversationId] = useState<
+    string | null
+  >(null);
+  const [selectedConversationDetail, setSelectedConversationDetail] =
+    useState<Conversation | null>(null);
   const [currentView, setCurrentView] = useState<View>("query");
   const [isLoadingDocuments, setIsLoadingDocuments] = useState(false);
   const [isLoadingConversations, setIsLoadingConversations] = useState(false);
@@ -43,6 +48,24 @@ function App() {
       loadConversations();
     }
   }, [authState]);
+
+  // Hydrate theme from localStorage into settings (single source of truth)
+  useEffect(() => {
+    const savedTheme = localStorage.getItem("theme");
+    if (savedTheme === "dark" || savedTheme === "light") {
+      setSettings((prev) => ({
+        ...prev,
+        darkMode: savedTheme === "dark",
+      }));
+    }
+  }, []);
+
+  // Apply theme side-effect when settings.darkMode changes
+  useEffect(() => {
+    const theme = settings.darkMode ? "dark" : "light";
+    localStorage.setItem("theme", theme);
+    document.documentElement.classList.toggle("dark", theme === "dark");
+  }, [settings.darkMode]);
 
   const loadDocuments = async () => {
     setIsLoadingDocuments(true);
@@ -77,7 +100,6 @@ function App() {
     toast.success("Started new conversation");
   };
 
-
   const handleSubmitQuery = async (query: string) => {
     console.log("SUBMIT_QUERY_CALLED", query);
     setIsProcessing(true); // safe to do BEFORE await
@@ -105,7 +127,6 @@ function App() {
       setIsProcessing(false);
     }
   };
-
 
   const handleUploadDocument = async (file: File) => {
     try {
@@ -175,7 +196,6 @@ function App() {
 
   return (
     <AuthGuard authState={authState}>
-
       {/* 🔎 UI build marker — REMOVE AFTER DEBUG */}
       <div
         style={{
@@ -191,8 +211,6 @@ function App() {
         UI-BUILD: 2026-01-26-A
       </div>
 
-
-
       <div className="h-screen flex flex-col">
         <Toaster position="top-right" richColors />
 
@@ -205,14 +223,34 @@ function App() {
               className="lg:hidden w-9 h-9 flex items-center justify-center rounded-lg hover:bg-secondary/50 transition-all duration-150"
               aria-label="Open menu"
             >
-              <svg className="w-5 h-5 text-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              <svg
+                className="w-5 h-5 text-foreground"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M4 6h16M4 12h16M4 18h16"
+                />
               </svg>
             </button>
 
             <div className="w-8 h-8 lg:w-10 lg:h-10 bg-gradient-to-br from-primary to-primary/80 rounded-lg lg:rounded-xl flex items-center justify-center shadow-lg shadow-primary/20">
-              <svg className="w-4 h-4 lg:w-5 lg:h-5 text-primary-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              <svg
+                className="w-4 h-4 lg:w-5 lg:h-5 text-primary-foreground"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                />
               </svg>
             </div>
 
@@ -223,14 +261,19 @@ function App() {
                   v1.0
                 </span>
               </div>
-              <div className="hidden lg:block text-xs text-muted-foreground">Document-faithful response system</div>
+              <div className="hidden lg:block text-xs text-muted-foreground">
+                Document-faithful response system
+              </div>
             </div>
           </div>
 
           <div className="flex items-center gap-2 lg:gap-3">
             <div className="hidden lg:flex px-3 py-1.5 bg-secondary/30 rounded-lg border border-border/30">
               <div className="text-xs text-muted-foreground">
-                Tenant: <span className="text-foreground/90 ml-1">Auto-detected via JWT</span>
+                Tenant:{" "}
+                <span className="text-foreground/90 ml-1">
+                  Auto-detected via JWT
+                </span>
               </div>
             </div>
             <div className="hidden lg:block h-6 w-px bg-border/50" />
@@ -240,10 +283,22 @@ function App() {
               className="w-9 h-9 lg:w-auto flex items-center justify-center lg:justify-start gap-2 lg:px-3 lg:py-1.5 bg-secondary/30 hover:bg-secondary/50 rounded-lg border border-border/30 hover:border-border/50 transition-all duration-150 group"
               aria-label="Share"
             >
-              <svg className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+              <svg
+                className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1.5}
+                  d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"
+                />
               </svg>
-              <span className="hidden lg:inline text-xs text-muted-foreground group-hover:text-foreground transition-colors">Share</span>
+              <span className="hidden lg:inline text-xs text-muted-foreground group-hover:text-foreground transition-colors">
+                Share
+              </span>
             </button>
 
             <button
@@ -251,11 +306,28 @@ function App() {
               className="w-9 h-9 lg:w-auto flex items-center justify-center lg:justify-start gap-2 lg:px-3 lg:py-1.5 bg-secondary/30 hover:bg-secondary/50 rounded-lg border border-border/30 hover:border-border/50 transition-all duration-150 group"
               aria-label="Settings"
             >
-              <svg className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              <svg
+                className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1.5}
+                  d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+                />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1.5}
+                  d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                />
               </svg>
-              <span className="hidden lg:inline text-xs text-muted-foreground group-hover:text-foreground transition-colors">Settings</span>
+              <span className="hidden lg:inline text-xs text-muted-foreground group-hover:text-foreground transition-colors">
+                Settings
+              </span>
             </button>
 
             <ThemeToggle />
@@ -278,9 +350,12 @@ function App() {
               isLoadingDocuments={isLoadingDocuments}
               isLoadingConversations={isLoadingConversations}
               isCollapsed={isSidebarCollapsed}
-              onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+              onToggleCollapse={() =>
+                setIsSidebarCollapsed(!isSidebarCollapsed)
+              }
               showDocumentBadges={settings.showDocumentBadges}
               confirmBeforeDelete={settings.confirmBeforeDelete}
+              compactView={settings.compactView}
             />
           </div>
 
