@@ -49,25 +49,14 @@ export function MobileDrawer({
   const MAX_ITEMS_PREVIEW = 5;
 
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (
-        drawerRef.current &&
-        !drawerRef.current.contains(event.target as Node)
-      ) {
-        onClose();
-      }
-    };
-
     if (isOpen) {
-      document.addEventListener("mousedown", handleClickOutside);
       document.body.style.overflow = "hidden";
     }
 
     return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
       document.body.style.overflow = "unset";
     };
-  }, [isOpen, onClose]);
+  }, [isOpen]);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];

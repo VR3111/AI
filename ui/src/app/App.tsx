@@ -6,6 +6,7 @@ import { ConversationViewer } from "./components/ConversationViewer";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { MobileDrawer } from "./components/MobileDrawer";
 import { SettingsPanel, SettingsState } from "./components/SettingsPanel";
+import { ConfirmDeleteDialog } from "./components/ConfirmDeleteDialog";
 import { api } from "./services/api";
 import { QueryResponse, Document, Conversation } from "./types/api";
 import { toast, Toaster } from "sonner";
@@ -41,6 +42,9 @@ function App() {
     enableNotifications: true,
     dataRetention: true,
   });
+  const [pendingDeleteDocument, setPendingDeleteDocument] =
+    useState<Document | null>(null);
+  const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
 
   useEffect(() => {
     if (authState === "authenticated") {
@@ -149,15 +153,6 @@ function App() {
   };
 
   const handleDeleteDocument = async (filename: string) => {
-    const doc = documents.find((d) => d.filename === filename);
-    if (!doc) return;
-
-    if (settings.confirmBeforeDelete) {
-      if (!confirm(`Delete "${doc.filename}"? This action cannot be undone.`)) {
-        return;
-      }
-    }
-
     try {
       await api.deleteDocument(filename);
       toast.success("Document deleted");
@@ -165,6 +160,36 @@ function App() {
     } catch (error) {
       toast.error("Failed to delete document");
     }
+  };
+
+  const handleRequestDeleteDocument = (filename: string) => {
+    const doc = documents.find((d) => d.filename === filename);
+    if (!doc) return;
+
+    if (!settings.confirmBeforeDelete) {
+      // No confirmation required — delete immediately
+      handleDeleteDocument(filename);
+      return;
+    }
+
+    // Confirmation required — open in-app dialog
+    setPendingDeleteDocument(doc);
+    setIsConfirmDeleteOpen(true);
+  };
+
+  const handleCancelDeleteDocument = () => {
+    setIsConfirmDeleteOpen(false);
+    setPendingDeleteDocument(null);
+  };
+
+  const handleConfirmDeleteDocument = async () => {
+    if (!pendingDeleteDocument) return;
+
+    setIsConfirmDeleteOpen(false);
+    const filename = pendingDeleteDocument.filename;
+    setPendingDeleteDocument(null);
+
+    await handleDeleteDocument(filename);
   };
 
   const handleSelectConversation = async (conversationId: string) => {
@@ -345,7 +370,7 @@ function App() {
               onNewConversation={handleNewConversation}
               onUploadDocument={handleUploadDocument}
               onIndexDocument={handleTriggerIndexing}
-              onDeleteDocument={handleDeleteDocument}
+              onDeleteDocument={handleRequestDeleteDocument}
               onOpenSettings={() => setIsSettingsOpen(true)}
               isLoadingDocuments={isLoadingDocuments}
               isLoadingConversations={isLoadingConversations}
@@ -371,7 +396,7 @@ function App() {
             onNewConversation={handleNewConversation}
             onUploadDocument={handleUploadDocument}
             onIndexDocument={handleTriggerIndexing}
-            onDeleteDocument={handleDeleteDocument}
+            onDeleteDocument={handleRequestDeleteDocument}
             isLoadingDocuments={isLoadingDocuments}
             isLoadingConversations={isLoadingConversations}
             showDocumentBadges={settings.showDocumentBadges}
@@ -384,6 +409,14 @@ function App() {
             onClose={() => setIsSettingsOpen(false)}
             settings={settings}
             onUpdateSettings={handleUpdateSettings}
+          />
+
+          {/* Confirm Delete Dialog */}
+          <ConfirmDeleteDialog
+            isOpen={isConfirmDeleteOpen}
+            document={pendingDeleteDocument}
+            onConfirm={handleConfirmDeleteDocument}
+            onCancel={handleCancelDeleteDocument}
           />
 
           {/* Main Content Area */}

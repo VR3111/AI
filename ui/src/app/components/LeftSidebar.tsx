@@ -457,18 +457,9 @@ export function LeftSidebar({
 
                         <button
                           onClick={() => {
-                            if (confirmBeforeDelete) {
-                              const confirmed = confirm(
-                                `Delete "${doc.filename}"? This action cannot be undone.`
-                              );
-                              if (confirmed) {
-                                onDeleteDocument(doc.filename);
-                              }
-                            } else {
-                              onDeleteDocument(doc.filename);
-                            }
+                            onDeleteDocument(doc.filename);
                           }}
-                          className="w-full text-xs text-destructive/80 hover:text-destructive py-1.5 opacity-0 group-hover:opacity-100 transition-all duration-200 relative flex items-center justify-center gap-1"
+                          className="w-full text-xs text-destructive/80 hover:text-destructive py-1.5 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-all duration-200 relative flex items-center justify-center gap-1"
                         >
                           <svg
                             className={`w-3 h-3 transition-all duration-200 ${
