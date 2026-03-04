@@ -14,6 +14,78 @@ import { toast, Toaster } from "sonner";
 type View = "query" | "conversation";
 
 function App() {
+  const STOPWORDS = new Set([
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "how",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "this",
+    "to",
+    "was",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "why",
+    "with",
+  ]);
+
+  const toTitleCase = (word: string) =>
+    word.charAt(0).toUpperCase() + word.slice(1);
+
+  const generateConversationTitle = (query: string): string => {
+    const normalized = query
+      .toLowerCase()
+      .replace(/[’]/g, "'")
+      .replace(/(?!\B'\B)[^\w\s']/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (!normalized) return "";
+
+    const words = normalized.split(" ").filter(Boolean);
+    const filteredWords = words.filter((word) => !STOPWORDS.has(word));
+    const sourceWords =
+      filteredWords.length >= 3
+        ? filteredWords
+        : filteredWords.length > 0
+        ? filteredWords
+        : words;
+
+    const title = sourceWords.slice(0, 6).map(toTitleCase).join(" ");
+    if (title.length <= 32) return title;
+
+    return `${title.slice(0, 31).trimEnd()}…`;
+  };
+
+  const cacheConversationTitle = (conversationId: string, title: string) => {
+    if (!title) return;
+
+    setConversations((prev) =>
+      prev.map((conv) =>
+        conv.conversation_id === conversationId
+          ? ({ ...conv, title } as Conversation)
+          : conv
+      )
+    );
+  };
+
   const [authState, setAuthState] = useState(api.getAuthState());
   const [currentResponse, setCurrentResponse] = useState<QueryResponse | null>(
     null
@@ -87,7 +159,18 @@ function App() {
     setIsLoadingConversations(true);
     try {
       const convs = await api.listConversations();
-      setConversations(convs);
+      setConversations((prev) =>
+        convs.map((conv) => {
+          const existing = prev.find(
+            (p) => p.conversation_id === conv.conversation_id
+          ) as (Conversation & { title?: string }) | undefined;
+
+          const cachedTitle = existing?.title?.trim() || "";
+          return cachedTitle
+            ? ({ ...conv, title: cachedTitle } as Conversation)
+            : conv;
+        })
+      );
     } catch (error) {
       toast.error("Failed to load conversations");
     } finally {
@@ -124,6 +207,10 @@ function App() {
       setSelectedConversationDetail(conversationDetail);
 
       await loadConversations();
+
+      const firstQuery = conversationDetail?.turns?.[0]?.query || "";
+      const derivedTitle = generateConversationTitle(firstQuery);
+      cacheConversationTitle(convId, derivedTitle);
     } catch (error) {
       console.error("handleSubmitQuery failed", error);
       toast.error("Failed to process query");
@@ -199,6 +286,10 @@ function App() {
     try {
       const conversationDetail = await api.getConversation(conversationId);
       setSelectedConversationDetail(conversationDetail);
+
+      const firstQuery = conversationDetail?.turns?.[0]?.query || "";
+      const derivedTitle = generateConversationTitle(firstQuery);
+      cacheConversationTitle(conversationId, derivedTitle);
     } catch (error) {
       toast.error("Failed to load conversation details");
       setSelectedConversationDetail(null);

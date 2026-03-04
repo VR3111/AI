@@ -616,7 +616,7 @@ export function LeftSidebar({
                               }
                               className="flex-1 min-w-0 text-left"
                             >
-                              <div className="flex items-start gap-2 mb-2">
+                              <div className="flex items-start gap-2">
                                 {/* If we have a real first turn, show mode icon.
                                     Else show a neutral icon */}
                                 <div
@@ -647,26 +647,9 @@ export function LeftSidebar({
                                   </svg>
                                 </div>
 
-                                <div className="flex-1 min-w-0 text-sm leading-relaxed line-clamp-2 text-foreground/90">
+                                <div className="flex-1 min-w-0 text-sm text-foreground/90 truncate whitespace-nowrap overflow-hidden">
                                   {previewText}
                                 </div>
-                              </div>
-
-                              <div className="flex items-center justify-between text-xs">
-                                <span className="text-muted-foreground/70">
-                                  {/* If turns exist, show turns count. Else show "Saved" */}
-                                  {conversation.turns?.length
-                                    ? `${conversation.turns.length} turn${
-                                        conversation.turns.length !== 1
-                                          ? "s"
-                                          : ""
-                                      }`
-                                    : "Saved"}
-                                </span>
-
-                                <span className="text-muted-foreground/50">
-                                  {formatDate(conversation.created_at)}
-                                </span>
                               </div>
                             </button>
 
