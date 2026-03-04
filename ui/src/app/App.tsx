@@ -14,6 +14,7 @@ import { toast, Toaster } from "sonner";
 type View = "query" | "conversation";
 
 function App() {
+  const TITLE_CACHE_KEY = "p1_title_cache";
   const STOPWORDS = new Set([
     "a",
     "an",
@@ -49,6 +50,18 @@ function App() {
   const toTitleCase = (word: string) =>
     word.charAt(0).toUpperCase() + word.slice(1);
 
+  const readTitleCache = (): Record<string, string> => {
+    try {
+      const raw = localStorage.getItem(TITLE_CACHE_KEY);
+      if (!raw) return {};
+
+      const parsed = JSON.parse(raw) as Record<string, string>;
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  };
+
   const generateConversationTitle = (query: string): string => {
     const normalized = query
       .toLowerCase()
@@ -72,18 +85,6 @@ function App() {
     if (title.length <= 32) return title;
 
     return `${title.slice(0, 31).trimEnd()}…`;
-  };
-
-  const cacheConversationTitle = (conversationId: string, title: string) => {
-    if (!title) return;
-
-    setConversations((prev) =>
-      prev.map((conv) =>
-        conv.conversation_id === conversationId
-          ? ({ ...conv, title } as Conversation)
-          : conv
-      )
-    );
   };
 
   const [authState, setAuthState] = useState(api.getAuthState());
@@ -117,6 +118,27 @@ function App() {
   const [pendingDeleteDocument, setPendingDeleteDocument] =
     useState<Document | null>(null);
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
+  const [titleCache, setTitleCache] = useState<Record<string, string>>(() =>
+    readTitleCache()
+  );
+
+  const cacheConversationTitle = (conversationId: string, title: string) => {
+    if (!title) return;
+
+    setConversations((prev) =>
+      prev.map((conv) =>
+        conv.conversation_id === conversationId
+          ? ({ ...conv, title } as Conversation)
+          : conv
+      )
+    );
+
+    setTitleCache((prev) => {
+      const next = { ...prev, [conversationId]: title };
+      localStorage.setItem(TITLE_CACHE_KEY, JSON.stringify(next));
+      return next;
+    });
+  };
 
   useEffect(() => {
     if (authState === "authenticated") {
@@ -159,15 +181,17 @@ function App() {
     setIsLoadingConversations(true);
     try {
       const convs = await api.listConversations();
-      setConversations((prev) =>
-        convs.map((conv) => {
-          const existing = prev.find(
-            (p) => p.conversation_id === conv.conversation_id
-          ) as (Conversation & { title?: string }) | undefined;
+      const persistedTitleCache = readTitleCache();
+      setTitleCache(persistedTitleCache);
 
-          const cachedTitle = existing?.title?.trim() || "";
+      setConversations(() =>
+        convs.map((conv) => {
+          const cachedTitle =
+            persistedTitleCache[conv.conversation_id]?.trim() || "";
+          const serverTitle = (conv as Conversation & { title?: string }).title;
+          const resolvedTitle = cachedTitle || serverTitle || "";
           return cachedTitle
-            ? ({ ...conv, title: cachedTitle } as Conversation)
+            ? ({ ...conv, title: resolvedTitle } as Conversation)
             : conv;
         })
       );
