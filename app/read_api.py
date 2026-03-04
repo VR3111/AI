@@ -114,3 +114,41 @@ def get_conversation(conversation_id: str, request: Request):
         }
     finally:
         conn.close()
+
+
+@router.delete("/conversations/{conversation_id}")
+def delete_conversation(conversation_id: str, request: Request):
+    """
+    Deletes a conversation and all its persisted query rows for the authenticated tenant.
+    """
+    tenant_id = request.state.tenant_id
+    db_path = _tenant_db_path(tenant_id)
+
+    try:
+        conn = _connect(db_path)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    try:
+        conn.execute(
+            """
+            DELETE FROM queries
+            WHERE tenant_id = ?
+              AND conversation_id = ?
+            """,
+            (tenant_id, conversation_id),
+        )
+
+        conn.execute(
+            """
+            DELETE FROM conversations
+            WHERE tenant_id = ?
+              AND conversation_id = ?
+            """,
+            (tenant_id, conversation_id),
+        )
+        conn.commit()
+
+        return {"status": "deleted"}
+    finally:
+        conn.close()

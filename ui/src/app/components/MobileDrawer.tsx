@@ -12,6 +12,7 @@ interface MobileDrawerProps {
   selectedConversationId: string | null;
   onSelectConversation: (conversationId: string) => void;
   onNewConversation: () => void;
+  onDeleteConversation: (conversationId: string) => void;
   onUploadDocument: (file: File) => void;
   onIndexDocument: (documentId: string) => void;
   onDeleteDocument: (documentId: string) => void;
@@ -30,6 +31,7 @@ export function MobileDrawer({
   selectedConversationId,
   onSelectConversation,
   onNewConversation,
+  onDeleteConversation,
   onUploadDocument,
   onIndexDocument,
   onDeleteDocument,
@@ -191,6 +193,7 @@ export function MobileDrawer({
             onNewConversation();
             onClose();
           }}
+          onDeleteConversation={onDeleteConversation}
           onUploadDocument={onUploadDocument}
           onIndexDocument={onIndexDocument}
           onDeleteDocument={onDeleteDocument}

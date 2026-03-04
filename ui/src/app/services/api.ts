@@ -13,7 +13,7 @@ import {
   UploadResponse,
   IndexingResponse,
   DeleteResponse,
-} from '../types/api';
+} from "../types/api";
 
 // =====================================================
 // Configuration
@@ -21,7 +21,7 @@ import {
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 
-const DEFAULT_TENANT_ID = 'acme';
+const DEFAULT_TENANT_ID = "acme";
 
 // =====================================================
 // DEV JWT (TEMPORARY)
@@ -30,19 +30,19 @@ const DEFAULT_TENANT_ID = 'acme';
 // 🔴 Keep "Bearer " prefix
 
 const DEV_JWT =
-  'Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ0ZW5hbnRfaWQiOiJhY21lIiwiaWF0IjoxNzY5OTU4NzQxLCJleHAiOjE3NzI1NTA3NDF9.-wQlj6M3-wsUa_QLCsyfM70IDE_dAtuEujoizJb_SHk';
+  "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0ZW5hbnRfaWQiOiJhY21lIiwiaWF0IjoxNzcyMTU4NTUyLCJleHAiOjE3NzQ3NTA1NTJ9.FNTnZuWnLjhxM-dwSF7ZXrESjSNi7UmqtCxo4yWzMYA";
 
 // =====================================================
 // Mock auth state (UI-level only)
 // =====================================================
-let currentAuthState: AuthState = 'authenticated';
+let currentAuthState: AuthState = "authenticated";
 
 // =====================================================
 // Helper function to make API calls
 // =====================================================
 async function apiCall<T>(
   endpoint: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
 ): Promise<T> {
   const url = `${API_BASE_URL}${endpoint}`;
 
@@ -51,7 +51,7 @@ async function apiCall<T>(
   const response = await fetch(url, {
     ...options,
     headers: {
-      'Content-Type': 'application/json',
+      "Content-Type": "application/json",
       Authorization: DEV_JWT,
       ...options.headers,
     },
@@ -78,18 +78,15 @@ async function apiCall<T>(
 
 function generateConversationId(): string {
   return (
-    'conv_' +
+    "conv_" +
     (crypto.randomUUID?.() ??
-      Date.now().toString(36) +
-        Math.random().toString(36).slice(2))
+      Date.now().toString(36) + Math.random().toString(36).slice(2))
   );
 }
-
 
 //function generateConversationId(): string {
 //  return 'conv_' + crypto.randomUUID();
 //}
-
 
 let currentConversationId: string | null = null;
 
@@ -112,37 +109,39 @@ export const api = {
 
   // ---------------- Query ----------------
 
-  async submitQuery(query: string, conversationId?: string): Promise<QueryResponse> {
-  console.log("SUBMIT_QUERY_FN_ENTER", { query, conversationId });
+  async submitQuery(
+    query: string,
+    conversationId?: string,
+  ): Promise<QueryResponse> {
+    console.log("SUBMIT_QUERY_FN_ENTER", { query, conversationId });
 
-  const convId =
-    conversationId || currentConversationId || generateConversationId();
+    const convId =
+      conversationId || currentConversationId || generateConversationId();
 
-  console.log("SUBMIT_QUERY_CONV_ID", convId);
+    console.log("SUBMIT_QUERY_CONV_ID", convId);
 
-  if (!conversationId) {
-    currentConversationId = convId;
-  }
+    if (!conversationId) {
+      currentConversationId = convId;
+    }
 
-  try {
-    console.log("SUBMIT_QUERY_BEFORE_APICALL", "/query");
-    const res = await apiCall<QueryResponse>("/query", {
-      method: "POST",
-      body: JSON.stringify({
-        query,
-        conversation_id: convId,
-        tenant_id: DEFAULT_TENANT_ID,
-        debug: false,
-      }),
-    });
-    console.log("SUBMIT_QUERY_AFTER_APICALL", res);
-    return res;
-  } catch (err) {
-    console.error("SUBMIT_QUERY_CATCH_ERR", err);
-    throw err;
-  }
-},
-
+    try {
+      console.log("SUBMIT_QUERY_BEFORE_APICALL", "/query");
+      const res = await apiCall<QueryResponse>("/query", {
+        method: "POST",
+        body: JSON.stringify({
+          query,
+          conversation_id: convId,
+          tenant_id: DEFAULT_TENANT_ID,
+          debug: false,
+        }),
+      });
+      console.log("SUBMIT_QUERY_AFTER_APICALL", res);
+      return res;
+    } catch (err) {
+      console.error("SUBMIT_QUERY_CATCH_ERR", err);
+      throw err;
+    }
+  },
 
   resetConversation() {
     currentConversationId = null;
@@ -156,7 +155,7 @@ export const api = {
   async listConversations(): Promise<Conversation[]> {
     try {
       const response =
-        await apiCall<ConversationsListResponse>('/conversations');
+        await apiCall<ConversationsListResponse>("/conversations");
 
       return response.conversations.map((conv) => ({
         conversation_id: conv.conversation_id,
@@ -165,17 +164,15 @@ export const api = {
         turns: [],
       }));
     } catch (error) {
-      console.error('Error listing conversations:', error);
+      console.error("Error listing conversations:", error);
       return [];
     }
   },
 
-  async getConversation(
-    conversationId: string
-  ): Promise<Conversation | null> {
+  async getConversation(conversationId: string): Promise<Conversation | null> {
     try {
       const response = await apiCall<ConversationDetail>(
-        `/conversations/${conversationId}`
+        `/conversations/${conversationId}`,
       );
 
       const turns: ConversationTurn[] = response.items.map((item) => {
@@ -198,9 +195,7 @@ export const api = {
             answer: item.answer,
             citations,
             artifacts,
-            debug: item.debug_json
-              ? JSON.parse(item.debug_json)
-              : null,
+            debug: item.debug_json ? JSON.parse(item.debug_json) : null,
           },
         };
       });
@@ -208,8 +203,7 @@ export const api = {
       const created_at =
         response.items[0]?.created_at || new Date().toISOString();
       const last_activity_at =
-        response.items[response.items.length - 1]?.created_at ||
-        created_at;
+        response.items[response.items.length - 1]?.created_at || created_at;
 
       return {
         conversation_id: response.conversation_id,
@@ -218,16 +212,22 @@ export const api = {
         turns,
       };
     } catch (error) {
-      console.error('Error getting conversation:', error);
+      console.error("Error getting conversation:", error);
       return null;
     }
+  },
+
+  async deleteConversation(conversationId: string): Promise<void> {
+    await apiCall<{ status: string }>(`/conversations/${conversationId}`, {
+      method: "DELETE",
+    });
   },
 
   // ---------------- Documents ----------------
   async listDocuments(): Promise<Document[]> {
     try {
       const response = await apiCall<DocumentsListResponse>(
-        `/tenants/${DEFAULT_TENANT_ID}/documents`
+        `/tenants/${DEFAULT_TENANT_ID}/documents`,
       );
 
       return response.documents.map((doc) => ({
@@ -237,31 +237,29 @@ export const api = {
         indexed: true,
       }));
     } catch (error) {
-      console.error('Error listing documents:', error);
+      console.error("Error listing documents:", error);
       return [];
     }
   },
 
   async uploadDocument(file: File): Promise<UploadResponse> {
     const formData = new FormData();
-    formData.append('file', file);
+    formData.append("file", file);
 
     const response = await fetch(
       `${API_BASE_URL}/tenants/${DEFAULT_TENANT_ID}/documents`,
       {
-        method: 'POST',
+        method: "POST",
         headers: {
           Authorization: DEV_JWT,
         },
         body: formData,
-      }
+      },
     );
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(
-        `Upload failed: ${response.status} - ${errorText}`
-      );
+      throw new Error(`Upload failed: ${response.status} - ${errorText}`);
     }
 
     return response.json();
@@ -270,14 +268,14 @@ export const api = {
   async triggerIndexing(): Promise<IndexingResponse> {
     return apiCall<IndexingResponse>(
       `/tenants/${DEFAULT_TENANT_ID}/documents/index`,
-      { method: 'POST' }
+      { method: "POST" },
     );
   },
 
   async deleteDocument(filename: string): Promise<void> {
     await apiCall<DeleteResponse>(
       `/tenants/${DEFAULT_TENANT_ID}/documents/${filename}`,
-      { method: 'DELETE' }
+      { method: "DELETE" },
     );
   },
 };

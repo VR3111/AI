@@ -10,6 +10,7 @@ interface LeftSidebarProps {
   selectedConversationId: string | null;
   onSelectConversation: (conversationId: string) => void;
   onNewConversation: () => void;
+  onDeleteConversation: (conversationId: string) => void;
   onUploadDocument: (file: File) => void;
   onIndexDocument: (documentId: string) => void;
   onDeleteDocument: (documentId: string) => void;
@@ -29,6 +30,7 @@ export function LeftSidebar({
   selectedConversationId,
   onSelectConversation,
   onNewConversation,
+  onDeleteConversation,
   onUploadDocument,
   onIndexDocument,
   onDeleteDocument,
@@ -599,70 +601,99 @@ export function LeftSidebar({
                         "New conversation";
 
                       return (
-                        <button
+                        <div
                           key={conversation.conversation_id}
-                          onClick={() =>
-                            onSelectConversation(conversation.conversation_id)
-                          }
-                          className={`w-full text-left rounded-lg transition-all duration-200 ${
-                            compactView ? "p-2" : "p-3"
-                          } ${
+                          className={`group w-full rounded-lg transition-all duration-200 ${
                             isSelected
                               ? "bg-primary/10 border border-primary/30 shadow-lg shadow-primary/5"
                               : "bg-secondary/20 hover:bg-secondary/40 border border-border/20 hover:border-border/40"
                           }`}
                         >
-                          <div className="flex items-start gap-2 mb-2">
-                            {/* If we have a real first turn, show mode icon.
-                                Else show a neutral icon */}
-                            <div
-                              className={`flex-shrink-0 mt-0.5 ${
-                                firstTurn?.response?.mode
-                                  ? getResponseModeColor(
-                                      firstTurn.response.mode
-                                    )
-                                  : "text-muted-foreground"
-                              }`}
+                          <div className={`flex items-start gap-2 ${compactView ? "p-2" : "p-3"}`}>
+                            <button
+                              onClick={() =>
+                                onSelectConversation(conversation.conversation_id)
+                              }
+                              className="flex-1 min-w-0 text-left"
+                            >
+                              <div className="flex items-start gap-2 mb-2">
+                                {/* If we have a real first turn, show mode icon.
+                                    Else show a neutral icon */}
+                                <div
+                                  className={`flex-shrink-0 mt-0.5 ${
+                                    firstTurn?.response?.mode
+                                      ? getResponseModeColor(
+                                          firstTurn.response.mode
+                                        )
+                                      : "text-muted-foreground"
+                                  }`}
+                                >
+                                  <svg
+                                    className="w-3 h-3"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    viewBox="0 0 24 24"
+                                  >
+                                    {firstTurn?.response?.mode ? (
+                                      getResponseModeIcon(firstTurn.response.mode)
+                                    ) : (
+                                      <path
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        strokeWidth={2}
+                                        d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                                      />
+                                    )}
+                                  </svg>
+                                </div>
+
+                                <div className="flex-1 min-w-0 text-sm leading-relaxed line-clamp-2 text-foreground/90">
+                                  {previewText}
+                                </div>
+                              </div>
+
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="text-muted-foreground/70">
+                                  {/* If turns exist, show turns count. Else show "Saved" */}
+                                  {conversation.turns?.length
+                                    ? `${conversation.turns.length} turn${
+                                        conversation.turns.length !== 1
+                                          ? "s"
+                                          : ""
+                                      }`
+                                    : "Saved"}
+                                </span>
+
+                                <span className="text-muted-foreground/50">
+                                  {formatDate(conversation.created_at)}
+                                </span>
+                              </div>
+                            </button>
+
+                            <button
+                              onClick={() =>
+                                onDeleteConversation(conversation.conversation_id)
+                              }
+                              className="mt-0.5 p-1.5 rounded-md text-destructive/80 hover:text-destructive hover:bg-destructive/10 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-all duration-200"
+                              aria-label="Delete conversation"
+                              title="Delete conversation"
                             >
                               <svg
-                                className="w-3 h-3"
+                                className="w-3.5 h-3.5"
                                 fill="none"
                                 stroke="currentColor"
                                 viewBox="0 0 24 24"
                               >
-                                {firstTurn?.response?.mode ? (
-                                  getResponseModeIcon(firstTurn.response.mode)
-                                ) : (
-                                  <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    strokeWidth={2}
-                                    d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                                  />
-                                )}
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={1.8}
+                                  d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3m-7 0h8"
+                                />
                               </svg>
-                            </div>
-
-                            <div className="flex-1 min-w-0 text-sm leading-relaxed line-clamp-2 text-foreground/90">
-                              {previewText}
-                            </div>
+                            </button>
                           </div>
-
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="text-muted-foreground/70">
-                              {/* If turns exist, show turns count. Else show "Saved" */}
-                              {conversation.turns?.length
-                                ? `${conversation.turns.length} turn${
-                                    conversation.turns.length !== 1 ? "s" : ""
-                                  }`
-                                : "Saved"}
-                            </span>
-
-                            <span className="text-muted-foreground/50">
-                              {formatDate(conversation.created_at)}
-                            </span>
-                          </div>
-                        </button>
+                        </div>
                       );
                     })}
                   </div>

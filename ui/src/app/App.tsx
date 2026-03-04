@@ -205,6 +205,26 @@ function App() {
     }
   };
 
+  const handleDeleteConversation = async (conversationId: string) => {
+    try {
+      await api.deleteConversation(conversationId);
+
+      setConversations((prev) =>
+        prev.filter((conv) => conv.conversation_id !== conversationId)
+      );
+
+      if (selectedConversationId === conversationId) {
+        setSelectedConversationId(null);
+        setSelectedConversationDetail(null);
+        setCurrentView("query");
+      }
+
+      toast.success("Conversation deleted");
+    } catch (error) {
+      toast.error("Failed to delete conversation");
+    }
+  };
+
   const handleCloseConversation = () => {
     setSelectedConversationId(null);
     setSelectedConversationDetail(null);
@@ -368,6 +388,7 @@ function App() {
               selectedConversationId={selectedConversationId}
               onSelectConversation={handleSelectConversation}
               onNewConversation={handleNewConversation}
+              onDeleteConversation={handleDeleteConversation}
               onUploadDocument={handleUploadDocument}
               onIndexDocument={handleTriggerIndexing}
               onDeleteDocument={handleRequestDeleteDocument}
@@ -394,6 +415,7 @@ function App() {
             selectedConversationId={selectedConversationId}
             onSelectConversation={handleSelectConversation}
             onNewConversation={handleNewConversation}
+            onDeleteConversation={handleDeleteConversation}
             onUploadDocument={handleUploadDocument}
             onIndexDocument={handleTriggerIndexing}
             onDeleteDocument={handleRequestDeleteDocument}
