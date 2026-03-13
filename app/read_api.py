@@ -1,6 +1,7 @@
 import os
 import sqlite3
 from fastapi import APIRouter, Request, HTTPException
+from app.persist import generate_conversation_title
 
 # =====================================================
 # Router
@@ -29,6 +30,60 @@ def _connect(db_path: str) -> sqlite3.Connection:
     return conn
 
 
+def _ensure_conversation_title_column(conn: sqlite3.Connection) -> None:
+    columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(conversations)").fetchall()
+    }
+    if "title" not in columns:
+        conn.execute("ALTER TABLE conversations ADD COLUMN title TEXT")
+
+
+def _backfill_missing_conversation_titles(
+    conn: sqlite3.Connection, tenant_id: str
+) -> None:
+    rows = conn.execute(
+        """
+        SELECT conversation_id
+        FROM conversations
+        WHERE tenant_id = ?
+          AND (title IS NULL OR TRIM(title) = '')
+        """,
+        (tenant_id,),
+    ).fetchall()
+
+    for row in rows:
+        first_query_row = conn.execute(
+            """
+            SELECT query
+            FROM queries
+            WHERE tenant_id = ?
+              AND conversation_id = ?
+            ORDER BY created_at ASC
+            LIMIT 1
+            """,
+            (tenant_id, row["conversation_id"]),
+        ).fetchone()
+
+        if not first_query_row:
+            continue
+
+        title = generate_conversation_title(str(first_query_row["query"] or ""))
+        if not title:
+            continue
+
+        conn.execute(
+            """
+            UPDATE conversations
+            SET title = ?
+            WHERE tenant_id = ?
+              AND conversation_id = ?
+              AND (title IS NULL OR TRIM(title) = '')
+            """,
+            (title, tenant_id, row["conversation_id"]),
+        )
+
+
 # =====================================================
 # Read APIs (READ-ONLY)
 # =====================================================
@@ -47,10 +102,13 @@ def list_conversations(request: Request):
         return {"tenant_id": tenant_id, "conversations": []}
 
     try:
+        _ensure_conversation_title_column(conn)
+        _backfill_missing_conversation_titles(conn, tenant_id)
         rows = conn.execute(
             """
             SELECT
               conversation_id,
+              title,
               created_at,
               last_activity_at
             FROM conversations

@@ -57,6 +57,7 @@ export interface ConversationListItem {
   conversation_id: string;
   created_at: string;
   last_activity_at: string;
+  title?: string;
 }
 
 export interface ConversationsListResponse {
@@ -69,6 +70,7 @@ export interface Conversation {
   conversation_id: string;
   created_at: string;
   last_activity_at: string;
+  title?: string;
   turns?: ConversationTurn[];
 }
 

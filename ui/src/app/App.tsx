@@ -14,79 +14,6 @@ import { toast, Toaster } from "sonner";
 type View = "query" | "conversation";
 
 function App() {
-  const TITLE_CACHE_KEY = "p1_title_cache";
-  const STOPWORDS = new Set([
-    "a",
-    "an",
-    "and",
-    "are",
-    "as",
-    "at",
-    "be",
-    "by",
-    "for",
-    "from",
-    "how",
-    "in",
-    "is",
-    "it",
-    "of",
-    "on",
-    "or",
-    "that",
-    "the",
-    "this",
-    "to",
-    "was",
-    "what",
-    "when",
-    "where",
-    "which",
-    "who",
-    "why",
-    "with",
-  ]);
-
-  const toTitleCase = (word: string) =>
-    word.charAt(0).toUpperCase() + word.slice(1);
-
-  const readTitleCache = (): Record<string, string> => {
-    try {
-      const raw = localStorage.getItem(TITLE_CACHE_KEY);
-      if (!raw) return {};
-
-      const parsed = JSON.parse(raw) as Record<string, string>;
-      return parsed && typeof parsed === "object" ? parsed : {};
-    } catch {
-      return {};
-    }
-  };
-
-  const generateConversationTitle = (query: string): string => {
-    const normalized = query
-      .toLowerCase()
-      .replace(/[’]/g, "'")
-      .replace(/(?!\B'\B)[^\w\s']/g, "")
-      .replace(/\s+/g, " ")
-      .trim();
-
-    if (!normalized) return "";
-
-    const words = normalized.split(" ").filter(Boolean);
-    const filteredWords = words.filter((word) => !STOPWORDS.has(word));
-    const sourceWords =
-      filteredWords.length >= 3
-        ? filteredWords
-        : filteredWords.length > 0
-        ? filteredWords
-        : words;
-
-    const title = sourceWords.slice(0, 6).map(toTitleCase).join(" ");
-    if (title.length <= 32) return title;
-
-    return `${title.slice(0, 31).trimEnd()}…`;
-  };
-
   const [authState, setAuthState] = useState(api.getAuthState());
   const [currentResponse, setCurrentResponse] = useState<QueryResponse | null>(
     null
@@ -118,27 +45,6 @@ function App() {
   const [pendingDeleteDocument, setPendingDeleteDocument] =
     useState<Document | null>(null);
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
-  const [titleCache, setTitleCache] = useState<Record<string, string>>(() =>
-    readTitleCache()
-  );
-
-  const cacheConversationTitle = (conversationId: string, title: string) => {
-    if (!title) return;
-
-    setConversations((prev) =>
-      prev.map((conv) =>
-        conv.conversation_id === conversationId
-          ? ({ ...conv, title } as Conversation)
-          : conv
-      )
-    );
-
-    setTitleCache((prev) => {
-      const next = { ...prev, [conversationId]: title };
-      localStorage.setItem(TITLE_CACHE_KEY, JSON.stringify(next));
-      return next;
-    });
-  };
 
   useEffect(() => {
     if (authState === "authenticated") {
@@ -181,20 +87,7 @@ function App() {
     setIsLoadingConversations(true);
     try {
       const convs = await api.listConversations();
-      const persistedTitleCache = readTitleCache();
-      setTitleCache(persistedTitleCache);
-
-      setConversations(() =>
-        convs.map((conv) => {
-          const cachedTitle =
-            persistedTitleCache[conv.conversation_id]?.trim() || "";
-          const serverTitle = (conv as Conversation & { title?: string }).title;
-          const resolvedTitle = cachedTitle || serverTitle || "";
-          return cachedTitle
-            ? ({ ...conv, title: resolvedTitle } as Conversation)
-            : conv;
-        })
-      );
+      setConversations(convs);
     } catch (error) {
       toast.error("Failed to load conversations");
     } finally {
@@ -231,10 +124,6 @@ function App() {
       setSelectedConversationDetail(conversationDetail);
 
       await loadConversations();
-
-      const firstQuery = conversationDetail?.turns?.[0]?.query || "";
-      const derivedTitle = generateConversationTitle(firstQuery);
-      cacheConversationTitle(convId, derivedTitle);
     } catch (error) {
       console.error("handleSubmitQuery failed", error);
       toast.error("Failed to process query");
@@ -310,10 +199,6 @@ function App() {
     try {
       const conversationDetail = await api.getConversation(conversationId);
       setSelectedConversationDetail(conversationDetail);
-
-      const firstQuery = conversationDetail?.turns?.[0]?.query || "";
-      const derivedTitle = generateConversationTitle(firstQuery);
-      cacheConversationTitle(conversationId, derivedTitle);
     } catch (error) {
       toast.error("Failed to load conversation details");
       setSelectedConversationDetail(null);

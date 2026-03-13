@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import sqlite3
 from typing import Any, Dict, Optional
 
@@ -35,6 +36,7 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS conversations (
   tenant_id TEXT NOT NULL,
   conversation_id TEXT NOT NULL,
+  title TEXT,
   created_at TEXT NOT NULL,
   last_activity_at TEXT NOT NULL,
   PRIMARY KEY (tenant_id, conversation_id)
@@ -62,6 +64,117 @@ CREATE INDEX IF NOT EXISTS idx_queries_conv_created
   ON queries(tenant_id, conversation_id, created_at);
 """
 
+_TITLE_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "how",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "this",
+    "to",
+    "was",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "why",
+    "with",
+}
+
+
+def _to_title_case(word: str) -> str:
+    return word[:1].upper() + word[1:]
+
+
+def generate_conversation_title(query: str) -> str:
+    normalized = (
+        query.lower()
+        .replace("’", "'")
+    )
+    normalized = re.sub(r"(?!\B'\B)[^\w\s']", "", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+
+    if not normalized:
+        return ""
+
+    words = [word for word in normalized.split(" ") if word]
+    filtered_words = [word for word in words if word not in _TITLE_STOPWORDS]
+    source_words = filtered_words if filtered_words else words
+
+    if len(source_words) < 3 and filtered_words:
+        source_words = filtered_words
+
+    title = " ".join(_to_title_case(word) for word in source_words[:6])
+    if len(title) <= 32:
+        return title
+
+    return f"{title[:31].rstrip()}…"
+
+
+def _ensure_conversation_title_column(conn: sqlite3.Connection) -> None:
+    columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(conversations)").fetchall()
+    }
+    if "title" not in columns:
+        conn.execute("ALTER TABLE conversations ADD COLUMN title TEXT")
+
+
+def _backfill_missing_conversation_titles(conn: sqlite3.Connection) -> None:
+    rows = conn.execute(
+        """
+        SELECT tenant_id, conversation_id
+        FROM conversations
+        WHERE title IS NULL OR TRIM(title) = ''
+        """
+    ).fetchall()
+
+    for row in rows:
+        first_query_row = conn.execute(
+            """
+            SELECT query
+            FROM queries
+            WHERE tenant_id = ?
+              AND conversation_id = ?
+            ORDER BY created_at ASC
+            LIMIT 1
+            """,
+            (row["tenant_id"], row["conversation_id"]),
+        ).fetchone()
+
+        if not first_query_row:
+            continue
+
+        title = generate_conversation_title(str(first_query_row["query"] or ""))
+        if not title:
+            continue
+
+        conn.execute(
+            """
+            UPDATE conversations
+            SET title = ?
+            WHERE tenant_id = ?
+              AND conversation_id = ?
+              AND (title IS NULL OR TRIM(title) = '')
+            """,
+            (title, row["tenant_id"], row["conversation_id"]),
+        )
+
 
 def init_db(tenant_id: str) -> str:
     """
@@ -78,6 +191,8 @@ def init_db(tenant_id: str) -> str:
     conn = _connect(db_path)
     try:
         conn.executescript(_SCHEMA)
+        _ensure_conversation_title_column(conn)
+        _backfill_missing_conversation_titles(conn)
     finally:
         conn.close()
 
@@ -128,12 +243,20 @@ def save_query_result(*, tenant_id: str, conversation_id: str, payload: Dict[str
         # Upsert conversation
         conn.execute(
             """
-            INSERT INTO conversations (tenant_id, conversation_id, created_at, last_activity_at)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO conversations (
+              tenant_id, conversation_id, title, created_at, last_activity_at
+            )
+            VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(tenant_id, conversation_id) DO UPDATE SET
-              last_activity_at=excluded.last_activity_at
+              last_activity_at = excluded.last_activity_at
             """,
-            (tenant_id, conversation_id, created_at, created_at),
+            (
+                tenant_id,
+                conversation_id,
+                generate_conversation_title(query_text) or None,
+                created_at,
+                created_at,
+            ),
         )
 
         # Insert query record (idempotent per request_id)
@@ -160,6 +283,8 @@ def save_query_result(*, tenant_id: str, conversation_id: str, payload: Dict[str
                 response_json,
             ),
         )
+
+        _backfill_missing_conversation_titles(conn)
 
     finally:
         conn.close()

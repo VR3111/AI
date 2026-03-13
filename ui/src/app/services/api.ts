@@ -161,6 +161,7 @@ export const api = {
         conversation_id: conv.conversation_id,
         created_at: conv.created_at,
         last_activity_at: conv.last_activity_at,
+        title: conv.title,
         turns: [],
       }));
     } catch (error) {
