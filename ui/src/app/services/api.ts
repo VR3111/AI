@@ -17,7 +17,7 @@ import {
   SupportRequestResponse,
 } from "../types/api";
 import { decodeJwtPayload } from "../../../lib/authIdentity";
-import { supabase } from "../../lib/supabase";
+import { supabase } from "@/lib/supabase";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 const DEFAULT_TENANT_ID = "acme";
@@ -59,19 +59,28 @@ async function getAccessToken(): Promise<string> {
   return token;
 }
 
+async function getAuthHeaders(
+  headers: HeadersInit = {},
+): Promise<HeadersInit> {
+  const token = await getAccessToken();
+
+  return {
+    Authorization: `Bearer ${token}`,
+    ...headers,
+  };
+}
+
 async function apiCall<T>(
   endpoint: string,
   options: RequestInit = {},
 ): Promise<T> {
   const url = `${API_BASE_URL}${endpoint}`;
-  const token = await getAccessToken();
 
   const response = await fetch(url, {
     ...options,
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-      ...options.headers,
+      ...(await getAuthHeaders(options.headers)),
     },
   });
 
@@ -262,15 +271,12 @@ export const api = {
 
   async uploadDocument(file: File): Promise<UploadResponse> {
     const tenantId = await requireTenantId();
-    const token = await getAccessToken();
     const formData = new FormData();
     formData.append("file", file);
 
     const response = await fetch(`${API_BASE_URL}/tenants/${tenantId}/documents`, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+      headers: await getAuthHeaders(),
       body: formData,
     });
 
