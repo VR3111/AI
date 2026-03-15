@@ -8,6 +8,7 @@ interface MobileDrawerProps {
   onClose: () => void;
   onOpenSettings: () => void;
   onOpenSupport: () => void;
+  onSignOut: () => void;
   conversations: Conversation[];
   documents: Document[];
   selectedConversationId: string | null;
@@ -28,6 +29,7 @@ export function MobileDrawer({
   onClose,
   onOpenSettings,
   onOpenSupport,
+  onSignOut,
   conversations,
   documents,
   selectedConversationId,
@@ -205,6 +207,10 @@ export function MobileDrawer({
           }}
           onOpenSupport={() => {
             onOpenSupport();
+            onClose();
+          }}
+          onSignOut={() => {
+            onSignOut();
             onClose();
           }}
           isLoadingDocuments={isLoadingDocuments}

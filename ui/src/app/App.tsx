@@ -11,6 +11,7 @@ import { SupportCenter } from "./components/SupportCenter";
 import { api } from "./services/api";
 import { QueryResponse, Document, Conversation } from "./types/api";
 import { toast, Toaster } from "sonner";
+import { supabase } from "../lib/supabase";
 
 type View = "query" | "conversation";
 
@@ -47,6 +48,7 @@ function App() {
   const [pendingDeleteDocument, setPendingDeleteDocument] =
     useState<Document | null>(null);
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
+  const [isAuthReady, setIsAuthReady] = useState(false);
 
   useEffect(() => {
     if (authState === "authenticated") {
@@ -54,6 +56,42 @@ function App() {
       loadConversations();
     }
   }, [authState]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const initAuth = async () => {
+      try {
+        await supabase.auth.initialize();
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : "Authentication failed",
+        );
+      } finally {
+        if (isMounted) {
+          setAuthState(api.getAuthState());
+          setIsAuthReady(true);
+        }
+      }
+    };
+
+    initAuth();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const syncAuthState = () => {
+      setAuthState(api.getAuthState());
+    };
+
+    window.addEventListener(api.AUTH_EVENT_NAME, syncAuthState);
+    return () => {
+      window.removeEventListener(api.AUTH_EVENT_NAME, syncAuthState);
+    };
+  }, []);
 
   // Hydrate theme from localStorage into settings (single source of truth)
   useEffect(() => {
@@ -241,6 +279,31 @@ function App() {
     setSettings((prev) => ({ ...prev, ...updates }));
   };
 
+  const handleSignOut = async () => {
+    await api.signOut();
+    setAuthState(api.getAuthState());
+    setCurrentResponse(null);
+    setDocuments([]);
+    setConversations([]);
+    setSelectedConversationId(null);
+    setSelectedConversationDetail(null);
+    setCurrentView("query");
+    setSubmittedQuery("");
+    setIsMobileDrawerOpen(false);
+    setIsSettingsOpen(false);
+    setIsSupportCenterOpen(false);
+    setPendingDeleteDocument(null);
+    setIsConfirmDeleteOpen(false);
+  };
+
+  if (!isAuthReady) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="text-sm text-muted-foreground">Loading...</div>
+      </div>
+    );
+  }
+
   return (
     <AuthGuard authState={authState}>
       {/* 🔎 UI build marker — REMOVE AFTER DEBUG */}
@@ -396,6 +459,7 @@ function App() {
               onDeleteDocument={handleRequestDeleteDocument}
               onOpenSettings={() => setIsSettingsOpen(true)}
               onOpenSupport={() => setIsSupportCenterOpen(true)}
+              onSignOut={handleSignOut}
               isLoadingDocuments={isLoadingDocuments}
               isLoadingConversations={isLoadingConversations}
               isCollapsed={isSidebarCollapsed}
@@ -423,6 +487,7 @@ function App() {
             onUploadDocument={handleUploadDocument}
             onIndexDocument={handleTriggerIndexing}
             onDeleteDocument={handleRequestDeleteDocument}
+            onSignOut={handleSignOut}
             isLoadingDocuments={isLoadingDocuments}
             isLoadingConversations={isLoadingConversations}
             showDocumentBadges={settings.showDocumentBadges}
