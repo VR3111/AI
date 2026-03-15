@@ -7,6 +7,7 @@ interface MobileDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   onOpenSettings: () => void;
+  onOpenSupport: () => void;
   conversations: Conversation[];
   documents: Document[];
   selectedConversationId: string | null;
@@ -26,6 +27,7 @@ export function MobileDrawer({
   isOpen,
   onClose,
   onOpenSettings,
+  onOpenSupport,
   conversations,
   documents,
   selectedConversationId,
@@ -200,6 +202,10 @@ export function MobileDrawer({
           onOpenSettings={() => {
             onOpenSettings(); // open SettingsPanel
             onClose(); // close drawer
+          }}
+          onOpenSupport={() => {
+            onOpenSupport();
+            onClose();
           }}
           isLoadingDocuments={isLoadingDocuments}
           isLoadingConversations={isLoadingConversations}

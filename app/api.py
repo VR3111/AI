@@ -2,14 +2,16 @@ import os
 import re
 import uuid
 import sqlite3
+import smtplib
 from datetime import datetime, timezone
+from email.message import EmailMessage
 from typing import Optional, Any
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
 from app.llm import generate_answer
@@ -64,6 +66,15 @@ if not CI_MODE:
 # =====================================================
 def now_iso():
     return datetime.now(timezone.utc).isoformat()
+
+
+SUPPORT_EMAIL_TO = os.getenv("P1_SUPPORT_EMAIL_TO", "vkrl3111@gmail.com")
+SUPPORT_EMAIL_FROM = os.getenv("P1_SUPPORT_EMAIL_FROM")
+SUPPORT_SMTP_HOST = os.getenv("P1_SUPPORT_SMTP_HOST")
+SUPPORT_SMTP_PORT = int(os.getenv("P1_SUPPORT_SMTP_PORT", "587"))
+SUPPORT_SMTP_USERNAME = os.getenv("P1_SUPPORT_SMTP_USERNAME")
+SUPPORT_SMTP_PASSWORD = os.getenv("P1_SUPPORT_SMTP_PASSWORD")
+SUPPORT_SMTP_USE_TLS = os.getenv("P1_SUPPORT_SMTP_USE_TLS", "true").lower() != "false"
 
 
 def wrap_response(
@@ -141,6 +152,59 @@ class QueryRequest(BaseModel):
     conversation_id: str
     tenant_id: Optional[str] = None
     debug: bool = False
+
+
+class SupportRequest(BaseModel):
+    request_type: str
+    subject: str
+    contact_email: str
+    details: str
+    conversation_id: Optional[str] = None
+    client_timestamp: str
+
+
+def _send_support_email(
+    *,
+    tenant_id: str,
+    payload: SupportRequest,
+    server_timestamp: str,
+) -> None:
+    if not SUPPORT_SMTP_HOST or not SUPPORT_EMAIL_FROM:
+        raise RuntimeError("Support email delivery is not configured on the server.")
+
+    subject = f"[P1 {payload.request_type.title()}] {payload.subject.strip()}"
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = SUPPORT_EMAIL_FROM
+    message["To"] = SUPPORT_EMAIL_TO
+    message["Reply-To"] = payload.contact_email.strip()
+
+    message.set_content(
+        "\n".join(
+            [
+                "P1 Support Request",
+                "",
+                f"Request type: {payload.request_type}",
+                f"Tenant: {tenant_id}",
+                f"Contact email: {payload.contact_email.strip()}",
+                f"Conversation ID: {payload.conversation_id or 'N/A'}",
+                f"Client timestamp: {payload.client_timestamp}",
+                f"Server timestamp: {server_timestamp}",
+                "",
+                "Details:",
+                payload.details.strip(),
+            ]
+        )
+    )
+
+    with smtplib.SMTP(SUPPORT_SMTP_HOST, SUPPORT_SMTP_PORT, timeout=20) as smtp:
+        smtp.ehlo()
+        if SUPPORT_SMTP_USE_TLS:
+            smtp.starttls()
+            smtp.ehlo()
+        if SUPPORT_SMTP_USERNAME and SUPPORT_SMTP_PASSWORD:
+            smtp.login(SUPPORT_SMTP_USERNAME, SUPPORT_SMTP_PASSWORD)
+        smtp.send_message(message)
 
 
 # =====================================================
@@ -368,5 +432,49 @@ def query_docs(payload: QueryRequest, request: Request):
             }
             if payload.debug
             else None,
+            )
         )
-    )
+
+
+@app.post("/support/requests")
+def submit_support_request(payload: SupportRequest, request: Request):
+    tenant_id = request.state.tenant_id
+    server_timestamp = now_iso()
+
+    request_type = payload.request_type.strip().lower()
+    if request_type not in {"issue", "feature", "contact"}:
+        raise HTTPException(status_code=400, detail="Invalid support request type")
+
+    subject = payload.subject.strip()
+    contact_email = payload.contact_email.strip()
+    details = payload.details.strip()
+
+    if not subject:
+        raise HTTPException(status_code=400, detail="Subject is required")
+    if not contact_email:
+        raise HTTPException(status_code=400, detail="Contact email is required")
+    if not details:
+        raise HTTPException(status_code=400, detail="Details are required")
+
+    try:
+        _send_support_email(
+            tenant_id=tenant_id,
+            payload=payload,
+            server_timestamp=server_timestamp,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except smtplib.SMTPException:
+        raise HTTPException(
+            status_code=502,
+            detail="Support request delivery failed. Please try again.",
+        )
+
+    return {
+        "status": "sent",
+        "request_type": request_type,
+        "recipient": SUPPORT_EMAIL_TO,
+        "tenant_id": tenant_id,
+        "conversation_id": payload.conversation_id,
+        "timestamp": server_timestamp,
+    }

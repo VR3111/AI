@@ -7,6 +7,7 @@ interface UserProfilePopupProps {
   userEmail: string;
   onSignOut: () => void;
   onOpenSettings: () => void;
+  onOpenSupport: () => void;
 }
 
 export function UserProfilePopup({
@@ -16,6 +17,7 @@ export function UserProfilePopup({
   userEmail,
   onSignOut,
   onOpenSettings,
+  onOpenSupport,
 }: UserProfilePopupProps) {
   const popupRef = useRef<HTMLDivElement>(null);
 
@@ -104,7 +106,13 @@ export function UserProfilePopup({
           </span>
         </button>
 
-        <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-secondary/50 transition-all duration-200 group text-left relative overflow-hidden">
+        <button
+          onClick={() => {
+            onOpenSupport();
+            onClose();
+          }}
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-secondary/50 transition-all duration-200 group text-left relative overflow-hidden"
+        >
           <div className="absolute inset-0 bg-gradient-to-b from-white/[0.02] to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
           <svg
             className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors relative"

@@ -117,3 +117,23 @@ export interface DeleteResponse {
   filename: string;
   message: string;
 }
+
+export type SupportRequestType = "issue" | "feature" | "contact";
+
+export interface SupportRequestPayload {
+  request_type: SupportRequestType;
+  subject: string;
+  contact_email: string;
+  details: string;
+  conversation_id?: string | null;
+  client_timestamp: string;
+}
+
+export interface SupportRequestResponse {
+  status: string;
+  request_type: SupportRequestType;
+  recipient: string;
+  tenant_id: string;
+  conversation_id: string | null;
+  timestamp: string;
+}

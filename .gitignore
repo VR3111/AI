@@ -26,3 +26,13 @@ dist/
 .env
 .env.local
 .venv/
+
+# Generated outputs
+output/
+
+# Temp scripts
+tmp/
+
+# Accidental root node project
+package.json
+package-lock.json

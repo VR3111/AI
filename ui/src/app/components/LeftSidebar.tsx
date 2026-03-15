@@ -15,6 +15,7 @@ interface LeftSidebarProps {
   onIndexDocument: (documentId: string) => void;
   onDeleteDocument: (documentId: string) => void;
   onOpenSettings: () => void;
+  onOpenSupport: () => void;
   isLoadingDocuments?: boolean;
   isLoadingConversations?: boolean;
   isCollapsed?: boolean;
@@ -35,6 +36,7 @@ export function LeftSidebar({
   onIndexDocument,
   onDeleteDocument,
   onOpenSettings,
+  onOpenSupport,
   isLoadingDocuments = false,
   isLoadingConversations = false,
   isCollapsed = false,
@@ -775,6 +777,7 @@ export function LeftSidebar({
           userName={userName}
           userEmail={userEmail}
           onOpenSettings={onOpenSettings}
+          onOpenSupport={onOpenSupport}
           onSignOut={() => {
             setIsProfileOpen(false);
             // Handle sign out

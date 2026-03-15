@@ -13,6 +13,8 @@ import {
   UploadResponse,
   IndexingResponse,
   DeleteResponse,
+  SupportRequestPayload,
+  SupportRequestResponse,
 } from "../types/api";
 
 // =====================================================
@@ -278,5 +280,14 @@ export const api = {
       `/tenants/${DEFAULT_TENANT_ID}/documents/${filename}`,
       { method: "DELETE" },
     );
+  },
+
+  async submitSupportRequest(
+    payload: SupportRequestPayload,
+  ): Promise<SupportRequestResponse> {
+    return apiCall<SupportRequestResponse>("/support/requests", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   },
 };

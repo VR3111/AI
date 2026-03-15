@@ -7,6 +7,7 @@ import { ThemeToggle } from "./components/ThemeToggle";
 import { MobileDrawer } from "./components/MobileDrawer";
 import { SettingsPanel, SettingsState } from "./components/SettingsPanel";
 import { ConfirmDeleteDialog } from "./components/ConfirmDeleteDialog";
+import { SupportCenter } from "./components/SupportCenter";
 import { api } from "./services/api";
 import { QueryResponse, Document, Conversation } from "./types/api";
 import { toast, Toaster } from "sonner";
@@ -33,6 +34,7 @@ function App() {
   const [submittedQuery, setSubmittedQuery] = useState<string>("");
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isSupportCenterOpen, setIsSupportCenterOpen] = useState(false);
   const [settings, setSettings] = useState<SettingsState>({
     autoIndexDocuments: false,
     showDocumentBadges: true,
@@ -393,6 +395,7 @@ function App() {
               onIndexDocument={handleTriggerIndexing}
               onDeleteDocument={handleRequestDeleteDocument}
               onOpenSettings={() => setIsSettingsOpen(true)}
+              onOpenSupport={() => setIsSupportCenterOpen(true)}
               isLoadingDocuments={isLoadingDocuments}
               isLoadingConversations={isLoadingConversations}
               isCollapsed={isSidebarCollapsed}
@@ -410,6 +413,7 @@ function App() {
             isOpen={isMobileDrawerOpen}
             onClose={() => setIsMobileDrawerOpen(false)}
             onOpenSettings={() => setIsSettingsOpen(true)}
+            onOpenSupport={() => setIsSupportCenterOpen(true)}
             conversations={conversations}
             documents={documents}
             selectedConversationId={selectedConversationId}
@@ -431,6 +435,14 @@ function App() {
             onClose={() => setIsSettingsOpen(false)}
             settings={settings}
             onUpdateSettings={handleUpdateSettings}
+          />
+
+          <SupportCenter
+            isOpen={isSupportCenterOpen}
+            onClose={() => setIsSupportCenterOpen(false)}
+            currentConversationId={
+              selectedConversationId ?? api.getCurrentConversationId()
+            }
           />
 
           {/* Confirm Delete Dialog */}
