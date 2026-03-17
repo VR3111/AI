@@ -20,7 +20,6 @@ import { decodeJwtPayload } from "../../../lib/authIdentity";
 import { supabase } from "@/lib/supabase";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
-const DEFAULT_TENANT_ID = "acme";
 
 let currentConversationId: string | null = null;
 
@@ -38,6 +37,7 @@ function getTenantIdFromToken(token: string | null): string | null {
     payload.tenant_id,
     payload.app_metadata?.tenant_id,
     payload.user_metadata?.tenant_id,
+    payload.sub,
   ];
 
   for (const candidate of candidates) {
@@ -46,7 +46,7 @@ function getTenantIdFromToken(token: string | null): string | null {
     }
   }
 
-  return DEFAULT_TENANT_ID;
+  return null;
 }
 
 async function getAccessToken(): Promise<string> {

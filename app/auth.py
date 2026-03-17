@@ -113,13 +113,15 @@ def _extract_tenant_id(payload: dict) -> str | None:
         payload.get("user_metadata", {}).get("tenant_id")
         if isinstance(payload.get("user_metadata"), dict)
         else None,
+        payload.get("sub"),
+        payload.get("id"),
     ]
 
     for candidate in candidates:
         if isinstance(candidate, str) and candidate.strip():
             return candidate
 
-    return DEFAULT_TENANT_ID
+    return None
 
 
 def _fetch_supabase_user(token: str) -> dict:
