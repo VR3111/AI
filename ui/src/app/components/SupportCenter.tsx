@@ -34,7 +34,7 @@ import { useIsMobile } from "./ui/use-mobile";
 import { api } from "../services/api";
 import {
   decodeJwtPayload,
-  getUserIdentityFromJwt,
+  getUserIdentity,
 } from "../../../lib/authIdentity";
 import { SupportRequestType } from "../types/api";
 
@@ -598,7 +598,10 @@ export function SupportCenter({
   useEffect(() => {
     if (!isOpen) return;
 
-    const { email: fallbackEmail } = getUserIdentityFromJwt(api.getAuthHeader());
+    const { email: fallbackEmail } = getUserIdentity(
+      api.getAuthHeader(),
+      api.getIdentity(),
+    );
     if (!email && fallbackEmail !== "unknown@local") {
       setEmail(fallbackEmail);
     }
@@ -674,9 +677,11 @@ export function SupportCenter({
     const payload = rawToken ? decodeJwtPayload(rawToken) : null;
     const conversationId = currentConversationId ?? api.getCurrentConversationId();
     const tenantId =
-      payload && typeof payload.tenant_id === "string"
+      (payload && typeof payload.tenant_id === "string"
         ? payload.tenant_id
-        : "Unknown";
+        : null) ??
+      api.getIdentity()?.tenant_id ??
+      "Unknown";
     const draft = [
       `Support request type: ${requestTypeLabel}`,
       `Subject: ${subject || "[add subject]"}`,

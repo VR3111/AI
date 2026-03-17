@@ -20,8 +20,12 @@ const AUTH_EVENT_NAME = "p1-auth-changed";
 
 let currentSession = readStoredSession();
 
+function isSupabaseConfigured() {
+  return Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
+}
+
 function assertSupabaseConfig() {
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  if (!isSupabaseConfigured()) {
     throw new Error("Supabase auth is not configured");
   }
 }
@@ -213,7 +217,9 @@ export const supabase = {
   AUTH_EVENT_NAME,
   auth: {
     async initialize() {
-      assertSupabaseConfig();
+      if (!isSupabaseConfigured()) {
+        return null;
+      }
 
       const authError = new URL(window.location.href).searchParams.get(
         "error_description",
@@ -282,6 +288,11 @@ export const supabase = {
     },
 
     async signOut() {
+      if (!isSupabaseConfigured()) {
+        setSession(null);
+        return;
+      }
+
       if (currentSession?.access_token) {
         try {
           await fetch(`${SUPABASE_URL}/auth/v1/logout`, {
@@ -297,6 +308,10 @@ export const supabase = {
     },
 
     async getSession() {
+      if (!isSupabaseConfigured()) {
+        return null;
+      }
+
       return ensureFreshSession();
     },
   },

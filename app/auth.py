@@ -1,6 +1,7 @@
 import json
 import os
 import time
+import uuid
 from urllib.request import Request as UrlRequest, urlopen
 
 from fastapi import Request
@@ -17,10 +18,19 @@ SUPABASE_JWKS_URL = (
 SUPABASE_JWT_AUDIENCE = os.getenv("SUPABASE_JWT_AUDIENCE", "authenticated")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
 LEGACY_JWT_SECRET = os.getenv("P1_JWT_SECRET")
-DEFAULT_TENANT_ID = "acme"
+GUEST_SESSION_SECRET = os.getenv("P1_GUEST_SESSION_SECRET") or LEGACY_JWT_SECRET
+GUEST_SESSION_COOKIE_NAME = os.getenv("P1_GUEST_SESSION_COOKIE_NAME", "p1_guest_session")
+GUEST_SESSION_COOKIE_SECURE = (
+    os.getenv("P1_GUEST_SESSION_COOKIE_SECURE", "false").lower() == "true"
+)
+GUEST_SESSION_COOKIE_MAX_AGE_SECONDS = int(
+    os.getenv("P1_GUEST_SESSION_COOKIE_MAX_AGE_SECONDS", str(60 * 60 * 24 * 30))
+)
+GUEST_SESSION_ISSUER = os.getenv("P1_GUEST_SESSION_ISSUER", "p1-guest")
+GUEST_SESSION_AUDIENCE = os.getenv("P1_GUEST_SESSION_AUDIENCE", "p1-guest")
 JWKS_CACHE_TTL_SECONDS = 300
 
-EXEMPT_PATHS = {"/health"}
+EXEMPT_PATHS = {"/health", "/auth/session", "/auth/guest-session", "/auth/guest-session/upgrade"}
 
 _jwks_cache: dict | None = None
 _jwks_cache_fetched_at = 0.0
@@ -168,6 +178,144 @@ def _resolve_authenticated_payload(token: str) -> dict:
     }
 
 
+def _require_guest_session_secret() -> str:
+    if not GUEST_SESSION_SECRET:
+        raise RuntimeError("P1_GUEST_SESSION_SECRET is not configured")
+    return GUEST_SESSION_SECRET
+
+
+def _issue_guest_session_payload() -> dict:
+    now = int(time.time())
+    guest_user_id = f"guest-user-{uuid.uuid4()}"
+    guest_tenant_id = f"guest-tenant-{uuid.uuid4()}"
+    return {
+        "sub": guest_user_id,
+        "guest_user_id": guest_user_id,
+        "tenant_id": guest_tenant_id,
+        "guest_tenant_id": guest_tenant_id,
+        "identity_type": "guest",
+        "can_upgrade": True,
+        "iss": GUEST_SESSION_ISSUER,
+        "aud": GUEST_SESSION_AUDIENCE,
+        "iat": now,
+        "nbf": now,
+        "exp": now + GUEST_SESSION_COOKIE_MAX_AGE_SECONDS,
+    }
+
+
+def issue_guest_session() -> tuple[str, dict]:
+    payload = _issue_guest_session_payload()
+    token = jwt.encode(payload, _require_guest_session_secret(), algorithm="HS256")
+    return token, payload
+
+
+def _decode_guest_session(token: str) -> dict:
+    payload = jwt.decode(
+        token,
+        _require_guest_session_secret(),
+        algorithms=["HS256"],
+        issuer=GUEST_SESSION_ISSUER,
+        audience=GUEST_SESSION_AUDIENCE,
+    )
+    tenant_id = _extract_tenant_id(payload)
+    if not tenant_id or payload.get("identity_type") != "guest":
+        raise JWTError("Invalid guest session")
+    return payload
+
+
+def get_guest_session_payload(request: Request) -> dict | None:
+    token = request.cookies.get(GUEST_SESSION_COOKIE_NAME)
+    if not token:
+        return None
+    try:
+        return _decode_guest_session(token)
+    except (JWTError, RuntimeError):
+        return None
+
+
+def _resolve_bearer_payload(request: Request) -> dict | None:
+    auth = request.headers.get("Authorization")
+    if not auth or not auth.startswith("Bearer "):
+        return None
+
+    token = auth.split(" ", 1)[1]
+    return _resolve_authenticated_payload(token)
+
+
+def resolve_request_identity(request: Request) -> dict | None:
+    try:
+        payload = _resolve_bearer_payload(request)
+    except (JWTError, RuntimeError):
+        raise
+
+    if payload:
+        return payload
+
+    guest_payload = get_guest_session_payload(request)
+    if guest_payload:
+        return guest_payload
+
+    return None
+
+
+def apply_request_identity(request: Request, payload: dict) -> None:
+    tenant_id = _extract_tenant_id(payload)
+    if not tenant_id:
+        raise JWTError("tenant_id missing in token")
+
+    request.state.tenant_id = tenant_id
+    request.state.identity_type = (
+        "guest" if payload.get("identity_type") == "guest" else "authenticated"
+    )
+    request.state.identity_payload = payload
+
+    parts = request.url.path.split("/")
+    if len(parts) > 2 and parts[1] == "tenants" and parts[2] != tenant_id:
+        raise PermissionError("Tenant access denied")
+
+
+def build_session_response(
+    payload: dict,
+    *,
+    pending_guest_tenant_id: str | None = None,
+) -> dict:
+    tenant_id = _extract_tenant_id(payload)
+    identity_type = (
+        "guest" if payload.get("identity_type") == "guest" else "authenticated"
+    )
+    user_id = payload.get("sub") or payload.get("id") or tenant_id
+    email = payload.get("email")
+    display_name = (
+        payload.get("name")
+        or payload.get("preferred_username")
+        or email
+        or user_id
+    )
+
+    return {
+        "authenticated": True,
+        "identity_type": identity_type,
+        "tenant_id": tenant_id,
+        "user_id": user_id,
+        "email": email,
+        "display_name": display_name,
+        "can_upgrade": identity_type == "guest",
+        "pending_guest_tenant_id": pending_guest_tenant_id,
+    }
+
+
+def set_guest_session_cookie(response, token: str) -> None:
+    response.set_cookie(
+        key=GUEST_SESSION_COOKIE_NAME,
+        value=token,
+        httponly=True,
+        secure=GUEST_SESSION_COOKIE_SECURE,
+        samesite="lax",
+        max_age=GUEST_SESSION_COOKIE_MAX_AGE_SECONDS,
+        path="/",
+    )
+
+
 def auth_middleware(app):
     @app.middleware("http")
     async def authenticate(request: Request, call_next):
@@ -177,34 +325,28 @@ def auth_middleware(app):
         if request.url.path in EXEMPT_PATHS:
             return await call_next(request)
 
-        auth = request.headers.get("Authorization")
-        if not auth or not auth.startswith("Bearer "):
-            return JSONResponse(
-                status_code=401,
-                content={"detail": "Missing Authorization header"},
-            )
-
-        token = auth.split(" ", 1)[1]
-
         try:
-            payload = _resolve_authenticated_payload(token)
+            payload = resolve_request_identity(request)
         except (JWTError, RuntimeError):
             return JSONResponse(
                 status_code=401,
                 content={"detail": "Invalid or expired token"},
             )
 
-        tenant_id = _extract_tenant_id(payload)
-        if not tenant_id:
+        if not payload:
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Authentication required"},
+            )
+
+        try:
+            apply_request_identity(request, payload)
+        except JWTError:
             return JSONResponse(
                 status_code=401,
                 content={"detail": "tenant_id missing in token"},
             )
-
-        request.state.tenant_id = tenant_id
-
-        parts = request.url.path.split("/")
-        if len(parts) > 2 and parts[1] == "tenants" and parts[2] != tenant_id:
+        except PermissionError:
             return JSONResponse(
                 status_code=403,
                 content={"detail": "Tenant access denied"},

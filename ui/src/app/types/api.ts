@@ -1,6 +1,7 @@
 // API types for the document Q&A system
 
 export type AuthState = "unauthenticated" | "unauthorized" | "authenticated";
+export type IdentityType = "authenticated" | "guest";
 
 export type ResponseMode = "direct_answer" | "guided_fallback" | "hard_refusal";
 
@@ -136,4 +137,23 @@ export interface SupportRequestResponse {
   tenant_id: string;
   conversation_id: string | null;
   timestamp: string;
+}
+
+export interface IdentitySession {
+  authenticated: boolean;
+  identity_type: IdentityType;
+  tenant_id: string;
+  user_id: string;
+  email: string | null;
+  display_name: string | null;
+  can_upgrade: boolean;
+  pending_guest_tenant_id: string | null;
+}
+
+export interface GuestUpgradeResponse {
+  status: string;
+  guest_tenant_id: string;
+  guest_user_id: string;
+  target_tenant_id: string;
+  target_user_id: string;
 }

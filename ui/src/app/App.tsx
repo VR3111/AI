@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { AuthGuard } from "./components/AuthGuard";
+import { AuthDialog } from "./components/AuthDialog";
 import { QueryInterface } from "./components/QueryInterface";
 import { LeftSidebar } from "./components/LeftSidebar";
 import { ConversationViewer } from "./components/ConversationViewer";
@@ -11,11 +12,11 @@ import { SupportCenter } from "./components/SupportCenter";
 import { api } from "./services/api";
 import { QueryResponse, Document, Conversation } from "./types/api";
 import { toast, Toaster } from "sonner";
-import { supabase } from "../lib/supabase";
 
 type View = "query" | "conversation";
 
 function App() {
+  const identity = api.getIdentity();
   const [authState, setAuthState] = useState(api.getAuthState());
   const [currentResponse, setCurrentResponse] = useState<QueryResponse | null>(
     null
@@ -36,6 +37,7 @@ function App() {
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isSupportCenterOpen, setIsSupportCenterOpen] = useState(false);
+  const [isAuthDialogOpen, setIsAuthDialogOpen] = useState(false);
   const [settings, setSettings] = useState<SettingsState>({
     autoIndexDocuments: false,
     showDocumentBadges: true,
@@ -62,7 +64,7 @@ function App() {
 
     const initAuth = async () => {
       try {
-        await supabase.auth.initialize();
+        await api.initializeSession();
       } catch (error) {
         toast.error(
           error instanceof Error ? error.message : "Authentication failed",
@@ -292,8 +294,11 @@ function App() {
     setIsMobileDrawerOpen(false);
     setIsSettingsOpen(false);
     setIsSupportCenterOpen(false);
+    setIsAuthDialogOpen(false);
     setPendingDeleteDocument(null);
     setIsConfirmDeleteOpen(false);
+    await loadDocuments();
+    await loadConversations();
   };
 
   if (!isAuthReady) {
@@ -306,6 +311,11 @@ function App() {
 
   return (
     <AuthGuard authState={authState}>
+      <AuthDialog
+        isOpen={isAuthDialogOpen}
+        onClose={() => setIsAuthDialogOpen(false)}
+      />
+
       {/* 🔎 UI build marker — REMOVE AFTER DEBUG */}
       <div
         style={{
@@ -382,7 +392,11 @@ function App() {
               <div className="text-xs text-muted-foreground">
                 Tenant:{" "}
                 <span className="text-foreground/90 ml-1">
-                  Auto-detected via JWT
+                  {identity?.tenant_id
+                    ? identity.identity_type === "guest"
+                      ? `Guest ${identity.tenant_id.slice(0, 18)}`
+                      : identity.tenant_id
+                    : "Initializing"}
                 </span>
               </div>
             </div>
@@ -459,6 +473,7 @@ function App() {
               onDeleteDocument={handleRequestDeleteDocument}
               onOpenSettings={() => setIsSettingsOpen(true)}
               onOpenSupport={() => setIsSupportCenterOpen(true)}
+              onOpenAuth={() => setIsAuthDialogOpen(true)}
               onSignOut={handleSignOut}
               isLoadingDocuments={isLoadingDocuments}
               isLoadingConversations={isLoadingConversations}
@@ -478,6 +493,7 @@ function App() {
             onClose={() => setIsMobileDrawerOpen(false)}
             onOpenSettings={() => setIsSettingsOpen(true)}
             onOpenSupport={() => setIsSupportCenterOpen(true)}
+            onOpenAuth={() => setIsAuthDialogOpen(true)}
             conversations={conversations}
             documents={documents}
             selectedConversationId={selectedConversationId}

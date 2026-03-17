@@ -12,12 +12,21 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.llm import generate_answer
 from app.retrieve import retrieve, dedupe_results, MAX_DISTANCE
 from app.persist import save_query_result
 from app.read_api import router as read_router
+from app.auth import (
+    auth_middleware,
+    resolve_request_identity,
+    get_guest_session_payload,
+    issue_guest_session,
+    set_guest_session_cookie,
+    build_session_response,
+)
 
 # -----------------------------------------------------
 # App + CI mode
@@ -28,9 +37,18 @@ app = FastAPI(title="Internal Assistant API")
 
 from fastapi.middleware.cors import CORSMiddleware
 
+CORS_ALLOW_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "P1_CORS_ALLOW_ORIGINS",
+        "http://127.0.0.1:5173,http://localhost:5173",
+    ).split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten later
+    allow_origins=CORS_ALLOW_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -40,8 +58,6 @@ app.add_middleware(
 
 app.include_router(read_router)
 
-from app.auth import auth_middleware
-
 auth_middleware(app)
 
 # -----------------------------------------------------
@@ -50,6 +66,68 @@ auth_middleware(app)
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
+
+
+@app.get("/auth/session")
+def get_auth_session(request: Request):
+    try:
+        payload = resolve_request_identity(request)
+    except Exception:
+        return JSONResponse(status_code=401, content={"detail": "Invalid or expired token"})
+
+    if not payload:
+        return JSONResponse(status_code=401, content={"detail": "Authentication required"})
+
+    pending_guest = None
+    if payload.get("identity_type") != "guest":
+        guest_payload = get_guest_session_payload(request)
+        if guest_payload:
+            pending_guest = str(guest_payload.get("guest_tenant_id") or guest_payload.get("tenant_id"))
+
+    return build_session_response(payload, pending_guest_tenant_id=pending_guest)
+
+
+@app.post("/auth/guest-session")
+def create_or_reuse_guest_session(request: Request):
+    try:
+        payload = resolve_request_identity(request)
+    except Exception:
+        return JSONResponse(status_code=401, content={"detail": "Invalid or expired token"})
+
+    if payload and payload.get("identity_type") != "guest":
+        response = JSONResponse(content=build_session_response(payload))
+        return response
+
+    if not payload:
+        token, payload = issue_guest_session()
+        response = JSONResponse(content=build_session_response(payload))
+        set_guest_session_cookie(response, token)
+        return response
+
+    return build_session_response(payload)
+
+
+@app.post("/auth/guest-session/upgrade")
+def prepare_guest_session_upgrade(request: Request):
+    try:
+        authenticated_payload = resolve_request_identity(request)
+    except Exception:
+        return JSONResponse(status_code=401, content={"detail": "Invalid or expired token"})
+
+    if not authenticated_payload or authenticated_payload.get("identity_type") == "guest":
+        return JSONResponse(status_code=401, content={"detail": "Authenticated user required"})
+
+    guest_payload = get_guest_session_payload(request)
+    if not guest_payload:
+        return JSONResponse(status_code=404, content={"detail": "No guest session available"})
+
+    return {
+        "status": "ready",
+        "guest_tenant_id": guest_payload.get("guest_tenant_id") or guest_payload.get("tenant_id"),
+        "guest_user_id": guest_payload.get("guest_user_id") or guest_payload.get("sub"),
+        "target_tenant_id": authenticated_payload.get("tenant_id"),
+        "target_user_id": authenticated_payload.get("sub") or authenticated_payload.get("id"),
+    }
 
 
 # -----------------------------------------------------

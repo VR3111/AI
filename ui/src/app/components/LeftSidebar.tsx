@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Document, Conversation } from "../types/api";
 import { UserProfilePopup } from "./UserProfilePopup";
 import { api } from "../services/api";
-import { getUserIdentityFromJwt } from "../../../lib/authIdentity";
+import { getUserIdentity } from "../../../lib/authIdentity";
 
 interface LeftSidebarProps {
   conversations: Conversation[];
@@ -16,6 +16,7 @@ interface LeftSidebarProps {
   onDeleteDocument: (documentId: string) => void;
   onOpenSettings: () => void;
   onOpenSupport: () => void;
+  onOpenAuth: () => void;
   onSignOut: () => void;
   isLoadingDocuments?: boolean;
   isLoadingConversations?: boolean;
@@ -38,6 +39,7 @@ export function LeftSidebar({
   onDeleteDocument,
   onOpenSettings,
   onOpenSupport,
+  onOpenAuth,
   onSignOut,
   isLoadingDocuments = false,
   isLoadingConversations = false,
@@ -58,9 +60,11 @@ export function LeftSidebar({
 
   const MAX_ITEMS_PREVIEW = 5;
 
-  // User identity (frontend-only, derived from JWT used by API client)
-  const { name: userName, email: userEmail } = getUserIdentityFromJwt(
-    api.getAuthHeader()
+  const identity = api.getIdentity();
+  const isGuest = identity?.identity_type === "guest";
+  const { name: userName, email: userEmail } = getUserIdentity(
+    api.getAuthHeader(),
+    identity,
   );
 
   // --------------------------------------------
@@ -778,6 +782,11 @@ export function LeftSidebar({
           onClose={() => setIsProfileOpen(false)}
           userName={userName}
           userEmail={userEmail}
+          isGuest={isGuest}
+          onOpenAuth={() => {
+            setIsProfileOpen(false);
+            onOpenAuth();
+          }}
           onOpenSettings={onOpenSettings}
           onOpenSupport={onOpenSupport}
           onSignOut={() => {

@@ -5,6 +5,8 @@ interface UserProfilePopupProps {
   onClose: () => void;
   userName: string;
   userEmail: string;
+  isGuest?: boolean;
+  onOpenAuth?: () => void;
   onSignOut: () => void;
   onOpenSettings: () => void;
   onOpenSupport: () => void;
@@ -15,6 +17,8 @@ export function UserProfilePopup({
   onClose,
   userName,
   userEmail,
+  isGuest = false,
+  onOpenAuth,
   onSignOut,
   onOpenSettings,
   onOpenSupport,
@@ -134,6 +138,34 @@ export function UserProfilePopup({
 
         <div className="h-px bg-border/30 my-2" />
 
+        {isGuest && onOpenAuth ? (
+          <button
+            onClick={() => {
+              onOpenAuth();
+              onClose();
+            }}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-secondary/50 transition-all duration-200 group text-left relative overflow-hidden"
+          >
+            <div className="absolute inset-0 bg-gradient-to-b from-white/[0.02] to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
+            <svg
+              className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors relative"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={1.5}
+                d="M15 7h6m0 0v6m0-6L10 18M9 7H5a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4"
+              />
+            </svg>
+            <span className="text-sm text-foreground/90 group-hover:text-foreground transition-colors relative">
+              Sign In or Sign Up
+            </span>
+          </button>
+        ) : null}
+
         <button
           onClick={onSignOut}
           className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-destructive/10 transition-all duration-200 group text-left relative overflow-hidden"
@@ -153,7 +185,7 @@ export function UserProfilePopup({
             />
           </svg>
           <span className="text-sm text-foreground/90 group-hover:text-destructive transition-colors relative">
-            Sign Out
+            {isGuest ? "Reset Guest Session" : "Sign Out"}
           </span>
         </button>
       </div>

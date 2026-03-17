@@ -1,5 +1,5 @@
 // Real API client for P1 backend
-// Connects to FastAPI backend endpoints
+// Supports authenticated users and backend-issued guest sessions.
 
 import {
   AuthState,
@@ -15,13 +15,43 @@ import {
   DeleteResponse,
   SupportRequestPayload,
   SupportRequestResponse,
+  IdentitySession,
+  GuestUpgradeResponse,
 } from "../types/api";
 import { decodeJwtPayload } from "../../../lib/authIdentity";
 import { supabase } from "@/lib/supabase";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
+const IDENTITY_STORAGE_KEY = "p1.identity.session";
 
 let currentConversationId: string | null = null;
+let currentIdentity = readStoredIdentity();
+
+function readStoredIdentity(): IdentitySession | null {
+  const raw = window.localStorage.getItem(IDENTITY_STORAGE_KEY);
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(raw) as IdentitySession;
+  } catch {
+    window.localStorage.removeItem(IDENTITY_STORAGE_KEY);
+    return null;
+  }
+}
+
+function writeStoredIdentity(identity: IdentitySession | null) {
+  currentIdentity = identity;
+
+  if (!identity) {
+    window.localStorage.removeItem(IDENTITY_STORAGE_KEY);
+  } else {
+    window.localStorage.setItem(IDENTITY_STORAGE_KEY, JSON.stringify(identity));
+  }
+
+  window.dispatchEvent(new Event(supabase.AUTH_EVENT_NAME));
+}
 
 function getTenantIdFromToken(token: string | null): string | null {
   if (!token) {
@@ -49,20 +79,18 @@ function getTenantIdFromToken(token: string | null): string | null {
   return null;
 }
 
-async function getAccessToken(): Promise<string> {
+async function getAuthenticatedAccessToken(): Promise<string | null> {
   const session = await supabase.auth.getSession();
-  const token = session?.access_token;
-  if (!token) {
-    throw new Error("Authentication required");
-  }
-
-  return token;
+  return session?.access_token ?? null;
 }
 
 async function getAuthHeaders(
   headers: HeadersInit = {},
 ): Promise<HeadersInit> {
-  const token = await getAccessToken();
+  const token = await getAuthenticatedAccessToken();
+  if (!token) {
+    return { ...headers };
+  }
 
   return {
     Authorization: `Bearer ${token}`,
@@ -70,23 +98,51 @@ async function getAuthHeaders(
   };
 }
 
+async function parseJsonResponse<T>(response: Response): Promise<T> {
+  if (response.status === 204) {
+    return {} as T;
+  }
+
+  return response.json();
+}
+
+async function fetchSession(
+  endpoint: string,
+  options: RequestInit = {},
+): Promise<Response> {
+  const url = `${API_BASE_URL}${endpoint}`;
+  const headers = await getAuthHeaders(options.headers);
+
+  return fetch(url, {
+    ...options,
+    credentials: "include",
+    headers,
+  });
+}
+
 async function apiCall<T>(
   endpoint: string,
   options: RequestInit = {},
 ): Promise<T> {
   const url = `${API_BASE_URL}${endpoint}`;
+  const isFormData = options.body instanceof FormData;
+  const authHeaders = await getAuthHeaders(options.headers);
+  const headers: HeadersInit = isFormData
+    ? authHeaders
+    : {
+        "Content-Type": "application/json",
+        ...authHeaders,
+      };
 
   const response = await fetch(url, {
     ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(await getAuthHeaders(options.headers)),
-    },
+    credentials: "include",
+    headers,
   });
 
   if (!response.ok) {
     if (response.status === 401 || response.status === 403) {
-      await supabase.auth.signOut();
+      await handleIdentityFailure();
     }
 
     const errorText = await response.text();
@@ -98,7 +154,7 @@ async function apiCall<T>(
     };
   }
 
-  return response.json();
+  return parseJsonResponse<T>(response);
 }
 
 function generateConversationId(): string {
@@ -109,32 +165,53 @@ function generateConversationId(): string {
   );
 }
 
-async function requireTenantId(): Promise<string> {
-  const token = await getAccessToken();
-  const tenantId = getTenantIdFromToken(token);
-  if (!tenantId) {
-    await supabase.auth.signOut();
-    throw new Error("Authenticated tenant is missing");
+async function ensureIdentity(): Promise<IdentitySession> {
+  const token = await getAuthenticatedAccessToken();
+  const endpoint = token ? "/auth/session" : "/auth/guest-session";
+  const method = token ? "GET" : "POST";
+
+  const response = await fetchSession(endpoint, { method });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || "Failed to establish session");
   }
 
-  return tenantId;
+  const identity = await parseJsonResponse<IdentitySession>(response);
+  writeStoredIdentity(identity);
+  return identity;
+}
+
+async function handleIdentityFailure() {
+  const token = await getAuthenticatedAccessToken();
+  if (token) {
+    await supabase.auth.signOut();
+  }
+  writeStoredIdentity(null);
+}
+
+async function requireTenantId(): Promise<string> {
+  const identity = currentIdentity ?? (await ensureIdentity());
+  if (!identity?.tenant_id) {
+    throw new Error("Tenant identity is missing");
+  }
+
+  return identity.tenant_id;
 }
 
 export const api = {
   AUTH_EVENT_NAME: supabase.AUTH_EVENT_NAME,
 
-  getAuthState(): AuthState {
-    const session = window.localStorage.getItem("p1.supabase.session");
-    if (!session) {
-      return "unauthenticated";
-    }
+  async initializeSession(): Promise<IdentitySession> {
+    await supabase.auth.initialize();
+    return ensureIdentity();
+  },
 
-    try {
-      const parsed = JSON.parse(session) as { access_token?: string };
-      return parsed.access_token ? "authenticated" : "unauthenticated";
-    } catch {
-      return "unauthenticated";
-    }
+  async refreshIdentitySession(): Promise<IdentitySession> {
+    return ensureIdentity();
+  },
+
+  getAuthState(): AuthState {
+    return currentIdentity?.authenticated ? "authenticated" : "unauthenticated";
   },
 
   getAuthHeader(): string | null {
@@ -152,6 +229,10 @@ export const api = {
   },
 
   getTenantId(): string | null {
+    if (currentIdentity?.tenant_id) {
+      return currentIdentity.tenant_id;
+    }
+
     const raw = window.localStorage.getItem("p1.supabase.session");
     if (!raw) {
       return null;
@@ -165,9 +246,21 @@ export const api = {
     }
   },
 
+  getIdentity(): IdentitySession | null {
+    return currentIdentity;
+  },
+
   async signOut() {
     currentConversationId = null;
     await supabase.auth.signOut();
+    writeStoredIdentity(null);
+    await ensureIdentity();
+  },
+
+  async prepareGuestUpgrade(): Promise<GuestUpgradeResponse> {
+    return apiCall<GuestUpgradeResponse>("/auth/guest-session/upgrade", {
+      method: "POST",
+    });
   },
 
   async submitQuery(
@@ -274,25 +367,18 @@ export const api = {
     const formData = new FormData();
     formData.append("file", file);
 
-    const response = await fetch(`${API_BASE_URL}/tenants/${tenantId}/documents`, {
-      method: "POST",
-      headers: await getAuthHeaders(),
-      body: formData,
-    });
+    const response = await apiCall<UploadResponse>(
+      `/tenants/${tenantId}/documents`,
+      {
+        method: "POST",
+        body: formData,
+      },
+    );
 
-    if (!response.ok) {
-      if (response.status === 401 || response.status === 403) {
-        await supabase.auth.signOut();
-      }
-
-      const errorText = await response.text();
-      throw new Error(`Upload failed: ${response.status} - ${errorText}`);
-    }
-
-    return response.json();
+    return response;
   },
 
-  async triggerIndexing(): Promise<IndexingResponse> {
+  async triggerIndexing(_documentId?: string): Promise<IndexingResponse> {
     const tenantId = await requireTenantId();
     return apiCall<IndexingResponse>(`/tenants/${tenantId}/documents/index`, {
       method: "POST",
