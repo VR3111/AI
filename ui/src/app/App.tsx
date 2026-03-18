@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { AuthGuard } from "./components/AuthGuard";
 import { AuthDialog } from "./components/AuthDialog";
 import { QueryInterface } from "./components/QueryInterface";
@@ -16,8 +16,8 @@ import { toast, Toaster } from "sonner";
 type View = "query" | "conversation";
 
 function App() {
-  const identity = api.getIdentity();
   const [authState, setAuthState] = useState(api.getAuthState());
+  const [identity, setIdentity] = useState(api.getIdentity());
   const [currentResponse, setCurrentResponse] = useState<QueryResponse | null>(
     null
   );
@@ -51,13 +51,7 @@ function App() {
     useState<Document | null>(null);
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
   const [isAuthReady, setIsAuthReady] = useState(false);
-
-  useEffect(() => {
-    if (authState === "authenticated") {
-      loadDocuments();
-      loadConversations();
-    }
-  }, [authState]);
+  const previousIdentityKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -72,6 +66,7 @@ function App() {
       } finally {
         if (isMounted) {
           setAuthState(api.getAuthState());
+          setIdentity(api.getIdentity());
           setIsAuthReady(true);
         }
       }
@@ -87,6 +82,7 @@ function App() {
   useEffect(() => {
     const syncAuthState = () => {
       setAuthState(api.getAuthState());
+      setIdentity(api.getIdentity());
     };
 
     window.addEventListener(api.AUTH_EVENT_NAME, syncAuthState);
@@ -94,6 +90,35 @@ function App() {
       window.removeEventListener(api.AUTH_EVENT_NAME, syncAuthState);
     };
   }, []);
+
+  useEffect(() => {
+    if (!isAuthReady) {
+      return;
+    }
+
+    const nextIdentityKey = identity
+      ? `${identity.identity_type}:${identity.tenant_id}:${identity.user_id}`
+      : null;
+    const previousIdentityKey = previousIdentityKeyRef.current;
+
+    if (previousIdentityKey !== null && previousIdentityKey !== nextIdentityKey) {
+      api.resetConversation();
+      setDocuments([]);
+      setConversations([]);
+      setSelectedConversationId(null);
+      setSelectedConversationDetail(null);
+      setCurrentView("query");
+      setCurrentResponse(null);
+      setSubmittedQuery("");
+    }
+
+    previousIdentityKeyRef.current = nextIdentityKey;
+
+    if (authState === "authenticated" && identity?.tenant_id) {
+      loadDocuments();
+      loadConversations();
+    }
+  }, [authState, identity, isAuthReady]);
 
   // Hydrate theme from localStorage into settings (single source of truth)
   useEffect(() => {
