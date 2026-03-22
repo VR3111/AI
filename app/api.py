@@ -3,6 +3,8 @@ import re
 import uuid
 import sqlite3
 import smtplib
+import logging
+import traceback
 from datetime import datetime, timezone
 from email.message import EmailMessage
 from typing import Optional, Any
@@ -11,20 +13,27 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.llm import generate_answer
 from app.retrieve import retrieve, dedupe_results, MAX_DISTANCE
-from app.persist import save_query_result
+from app.persist import save_query_result, transfer_conversations, delete_tenant_data
 from app.read_api import router as read_router
 from app.auth import (
     auth_middleware,
     resolve_request_identity,
     get_guest_session_payload,
     issue_guest_session,
+    issue_guest_upgrade_ticket,
+    decode_guest_upgrade_ticket,
+    get_authenticated_user,
+    delete_supabase_user,
     set_guest_session_cookie,
+    clear_guest_session_cookie,
     build_session_response,
 )
 
@@ -59,6 +68,14 @@ app.add_middleware(
 app.include_router(read_router)
 
 auth_middleware(app)
+
+
+class GuestUpgradeTicketRequest(BaseModel):
+    email: str
+
+
+class GuestUpgradeRequest(BaseModel):
+    ticket: str
 
 # -----------------------------------------------------
 # Health
@@ -107,8 +124,39 @@ def create_or_reuse_guest_session(request: Request):
     return build_session_response(payload)
 
 
+@app.post("/auth/guest-session/upgrade-ticket")
+def create_guest_upgrade_ticket(
+    payload: GuestUpgradeTicketRequest,
+    request: Request,
+):
+    try:
+        identity_payload = resolve_request_identity(request)
+    except Exception:
+        return JSONResponse(status_code=401, content={"detail": "Invalid or expired token"})
+
+    if not identity_payload or identity_payload.get("identity_type") != "guest":
+        return JSONResponse(status_code=401, content={"detail": "Guest session required"})
+
+    try:
+        ticket = issue_guest_upgrade_ticket(
+            guest_payload=identity_payload,
+            email=payload.email,
+        )
+    except ValueError as error:
+        return JSONResponse(status_code=400, content={"detail": str(error)})
+
+    return {
+        "status": "issued",
+        "ticket": ticket,
+        "guest_tenant_id": identity_payload.get("guest_tenant_id") or identity_payload.get("tenant_id"),
+    }
+
+
 @app.post("/auth/guest-session/upgrade")
-def prepare_guest_session_upgrade(request: Request):
+def prepare_guest_session_upgrade(
+    payload: GuestUpgradeRequest,
+    request: Request,
+):
     try:
         authenticated_payload = resolve_request_identity(request)
     except Exception:
@@ -117,17 +165,100 @@ def prepare_guest_session_upgrade(request: Request):
     if not authenticated_payload or authenticated_payload.get("identity_type") == "guest":
         return JSONResponse(status_code=401, content={"detail": "Authenticated user required"})
 
-    guest_payload = get_guest_session_payload(request)
-    if not guest_payload:
-        return JSONResponse(status_code=404, content={"detail": "No guest session available"})
+    try:
+        ticket_payload = decode_guest_upgrade_ticket(payload.ticket)
+        authenticated_user = get_authenticated_user(request)
+    except Exception:
+        return JSONResponse(status_code=401, content={"detail": "Invalid guest upgrade ticket"})
 
-    return {
-        "status": "ready",
-        "guest_tenant_id": guest_payload.get("guest_tenant_id") or guest_payload.get("tenant_id"),
-        "guest_user_id": guest_payload.get("guest_user_id") or guest_payload.get("sub"),
-        "target_tenant_id": authenticated_payload.get("tenant_id"),
-        "target_user_id": authenticated_payload.get("sub") or authenticated_payload.get("id"),
-    }
+    # Merge rules:
+    # - Existing-account sign-in never merges because it has no valid signup ticket.
+    # - Guest signup can merge after verification on the first authenticated login
+    #   only when the signed ticket email matches and the account did not exist
+    #   before the ticket was issued.
+    # - After a successful merge, the client clears the stored ticket so the move
+    #   only happens once.
+    ticket_email = str(ticket_payload.get("email") or "").strip().lower()
+    user_email = str(authenticated_user.get("email") or "").strip().lower()
+    if not ticket_email or not user_email or ticket_email != user_email:
+        return JSONResponse(status_code=403, content={"detail": "Guest upgrade email mismatch"})
+
+    user_created_at = authenticated_user.get("created_at")
+    if not isinstance(user_created_at, str) or not user_created_at:
+        return JSONResponse(status_code=403, content={"detail": "Unable to validate account age"})
+
+    created_timestamp = datetime.fromisoformat(
+        user_created_at.replace("Z", "+00:00")
+    ).timestamp()
+    ticket_issued_at = float(ticket_payload.get("iat") or 0)
+    if created_timestamp + 5 < ticket_issued_at:
+        return JSONResponse(status_code=403, content={"detail": "Guest upgrade is only available for new accounts"})
+
+    guest_tenant_id = str(ticket_payload.get("guest_tenant_id") or "")
+    target_tenant_id = str(authenticated_payload.get("tenant_id"))
+    transferred_count = transfer_conversations(
+        source_tenant_id=guest_tenant_id,
+        target_tenant_id=target_tenant_id,
+    )
+
+    response = JSONResponse(
+        content={
+            "status": (
+                "transferred"
+                if transferred_count > 0
+                else "skipped" if transferred_count < 0 else "ready"
+            ),
+            "guest_tenant_id": guest_tenant_id,
+            "guest_user_id": ticket_payload.get("guest_user_id"),
+            "target_tenant_id": target_tenant_id,
+            "target_user_id": authenticated_payload.get("sub") or authenticated_payload.get("id"),
+        }
+    )
+
+    guest_payload = get_guest_session_payload(request)
+    guest_cookie_tenant_id = (
+        str(guest_payload.get("guest_tenant_id") or guest_payload.get("tenant_id"))
+        if guest_payload
+        else None
+    )
+    if transferred_count >= 0 and guest_cookie_tenant_id == guest_tenant_id:
+        clear_guest_session_cookie(response)
+    return response
+
+
+@app.delete("/auth/account")
+def delete_account(request: Request):
+    try:
+        authenticated_payload = resolve_request_identity(request)
+    except Exception:
+        return JSONResponse(status_code=401, content={"detail": "Invalid or expired token"})
+
+    if not authenticated_payload or authenticated_payload.get("identity_type") == "guest":
+        return JSONResponse(status_code=401, content={"detail": "Authenticated user required"})
+
+    identity_payload = getattr(request.state, "identity_payload", None) or authenticated_payload
+    tenant_id = str(getattr(request.state, "tenant_id", "") or identity_payload.get("tenant_id") or "")
+    user_id = str(
+        identity_payload.get("sub")
+        or identity_payload.get("id")
+        or getattr(request.state, "user_id", "")
+        or ""
+    )
+    if not user_id or not tenant_id:
+        return JSONResponse(status_code=400, content={"detail": "Authenticated account is missing identifiers"})
+
+    try:
+        delete_supabase_user(user_id)
+        delete_tenant_data(tenant_id)
+    except RuntimeError as error:
+        return JSONResponse(status_code=501, content={"detail": str(error)})
+    except Exception as e:
+        logger.exception("DELETE /auth/account failed for user_id=%s tenant_id=%s", user_id, tenant_id)
+        return JSONResponse(status_code=500, content={"detail": "Failed to delete account"})
+
+    response = JSONResponse(content={"status": "deleted"})
+    clear_guest_session_cookie(response)
+    return response
 
 
 # -----------------------------------------------------

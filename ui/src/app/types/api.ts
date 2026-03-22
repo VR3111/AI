@@ -157,3 +157,9 @@ export interface GuestUpgradeResponse {
   target_tenant_id: string;
   target_user_id: string;
 }
+
+export interface GuestUpgradeTicketResponse {
+  status: string;
+  ticket: string;
+  guest_tenant_id: string;
+}

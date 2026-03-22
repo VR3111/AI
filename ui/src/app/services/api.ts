@@ -17,12 +17,14 @@ import {
   SupportRequestResponse,
   IdentitySession,
   GuestUpgradeResponse,
+  GuestUpgradeTicketResponse,
 } from "../types/api";
 import { decodeJwtPayload } from "../../../lib/authIdentity";
 import { supabase } from "@/lib/supabase";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 const IDENTITY_STORAGE_KEY = "p1.identity.session";
+const PENDING_GUEST_UPGRADE_STORAGE_KEY = "p1.pending_guest_upgrade";
 
 let currentConversationId: string | null = null;
 let currentIdentity = readStoredIdentity();
@@ -141,17 +143,29 @@ async function apiCall<T>(
   });
 
   if (!response.ok) {
+    let message = "Request failed";
+    const errorText = await response.text();
+    try {
+      const parsed = JSON.parse(errorText) as { detail?: string; message?: string };
+      message = parsed.detail || parsed.message || errorText || message;
+    } catch {
+      message = errorText || message;
+    }
+
     if (response.status === 401 || response.status === 403) {
       await handleIdentityFailure();
     }
 
-    const errorText = await response.text();
-    throw {
-      status: response.status,
-      body: errorText,
-      url,
-      endpoint,
-    };
+    const error = new Error(message);
+    (error as Error & { status?: number; body?: string; url?: string; endpoint?: string }).status =
+      response.status;
+    (error as Error & { status?: number; body?: string; url?: string; endpoint?: string }).body =
+      errorText;
+    (error as Error & { status?: number; body?: string; url?: string; endpoint?: string }).url =
+      url;
+    (error as Error & { status?: number; body?: string; url?: string; endpoint?: string }).endpoint =
+      endpoint;
+    throw error;
   }
 
   return parseJsonResponse<T>(response);
@@ -250,17 +264,89 @@ export const api = {
     return currentIdentity;
   },
 
+  markPendingGuestUpgrade(ticket: string, email: string) {
+    window.localStorage.setItem(
+      PENDING_GUEST_UPGRADE_STORAGE_KEY,
+      JSON.stringify({ ticket, email: email.trim().toLowerCase() }),
+    );
+  },
+
+  clearPendingGuestUpgrade() {
+    window.localStorage.removeItem(PENDING_GUEST_UPGRADE_STORAGE_KEY);
+  },
+
+  hasPendingGuestUpgrade(): boolean {
+    return Boolean(window.localStorage.getItem(PENDING_GUEST_UPGRADE_STORAGE_KEY));
+  },
+
+  getPendingGuestUpgrade(): { ticket: string; email: string } | null {
+    const raw = window.localStorage.getItem(PENDING_GUEST_UPGRADE_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+
+    try {
+      const parsed = JSON.parse(raw) as { ticket?: string; email?: string };
+      if (
+        typeof parsed.ticket === "string" &&
+        parsed.ticket.trim() &&
+        typeof parsed.email === "string" &&
+        parsed.email.trim()
+      ) {
+        return {
+          ticket: parsed.ticket,
+          email: parsed.email.trim().toLowerCase(),
+        };
+      }
+
+      window.localStorage.removeItem(PENDING_GUEST_UPGRADE_STORAGE_KEY);
+      return null;
+    } catch {
+      window.localStorage.removeItem(PENDING_GUEST_UPGRADE_STORAGE_KEY);
+      return null;
+    }
+  },
+
   async signOut() {
     currentConversationId = null;
     await supabase.auth.signOut();
     writeStoredIdentity(null);
+    api.clearPendingGuestUpgrade();
     await ensureIdentity();
   },
 
   async prepareGuestUpgrade(): Promise<GuestUpgradeResponse> {
+    const pending = api.getPendingGuestUpgrade();
+    if (!pending) {
+      throw new Error("No pending guest upgrade");
+    }
+
     return apiCall<GuestUpgradeResponse>("/auth/guest-session/upgrade", {
       method: "POST",
+      body: JSON.stringify({ ticket: pending.ticket }),
     });
+  },
+
+  async createGuestUpgradeTicket(
+    email: string,
+  ): Promise<GuestUpgradeTicketResponse> {
+    return apiCall<GuestUpgradeTicketResponse>(
+      "/auth/guest-session/upgrade-ticket",
+      {
+        method: "POST",
+        body: JSON.stringify({ email: email.trim().toLowerCase() }),
+      },
+    );
+  },
+
+  async deleteAccount(): Promise<void> {
+    await apiCall<{ status: string }>("/auth/account", {
+      method: "DELETE",
+    });
+    currentConversationId = null;
+    await supabase.auth.signOut();
+    writeStoredIdentity(null);
+    api.clearPendingGuestUpgrade();
   },
 
   async submitQuery(

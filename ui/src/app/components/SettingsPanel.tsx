@@ -15,6 +15,8 @@ interface SettingsPanelProps {
   onClose: () => void;
   settings: SettingsState;
   onUpdateSettings: (settings: Partial<SettingsState>) => void;
+  canDeleteAccount?: boolean;
+  onDeleteAccount?: () => void;
 }
 
 interface ToggleSwitchProps {
@@ -71,7 +73,14 @@ function ToggleSwitch({ id, enabled, onChange, label, description, confirmationT
   );
 }
 
-export function SettingsPanel({ isOpen, onClose, settings, onUpdateSettings }: SettingsPanelProps) {
+export function SettingsPanel({
+  isOpen,
+  onClose,
+  settings,
+  onUpdateSettings,
+  canDeleteAccount = false,
+  onDeleteAccount,
+}: SettingsPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -245,6 +254,28 @@ export function SettingsPanel({ isOpen, onClose, settings, onUpdateSettings }: S
                   confirmationText="History retention enabled"
                 />
               </div>
+              {canDeleteAccount ? (
+                <>
+                  <div className="h-px bg-border/30" />
+                  <div className="relative">
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm text-foreground/90">Delete Account</p>
+                        <p className="text-xs text-muted-foreground/70 mt-0.5">
+                          Permanently remove your account and tenant data.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={onDeleteAccount}
+                        className="px-3 py-2 rounded-lg border border-destructive/30 text-destructive hover:bg-destructive/10 transition-colors"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                </>
+              ) : null}
             </div>
           </section>
         </div>

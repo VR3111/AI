@@ -66,12 +66,33 @@ export function AuthDialog({ isOpen, onClose }: AuthDialogProps) {
             setNotice(null);
 
             try {
+              const shouldUpgradeGuest =
+                mode === "sign-up" && api.getIdentity()?.identity_type === "guest";
+
               if (mode === "sign-in") {
                 await supabase.auth.signInWithPassword(email, password);
               } else {
+                // Signup is the only path that can migrate guest conversations.
+                // We mint a signed backend ticket before signup so the transfer can
+                // complete later after email verification and the first real login.
+                let upgradeTicket: string | null = null;
+                if (shouldUpgradeGuest) {
+                  const ticketResponse = await api.createGuestUpgradeTicket(
+                    email.trim(),
+                  );
+                  upgradeTicket = ticketResponse.ticket;
+                }
+
                 const result = await supabase.auth.signUp(email, password);
+                if (shouldUpgradeGuest && upgradeTicket) {
+                  api.markPendingGuestUpgrade(upgradeTicket, email.trim());
+                }
                 if (result.needsEmailConfirmation) {
                   setNotice("Check your email to confirm your account.");
+                }
+                if (result.session && shouldUpgradeGuest) {
+                  await api.prepareGuestUpgrade();
+                  api.clearPendingGuestUpgrade();
                 }
               }
 

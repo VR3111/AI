@@ -8,6 +8,7 @@ import { ThemeToggle } from "./components/ThemeToggle";
 import { MobileDrawer } from "./components/MobileDrawer";
 import { SettingsPanel, SettingsState } from "./components/SettingsPanel";
 import { ConfirmDeleteDialog } from "./components/ConfirmDeleteDialog";
+import { ConfirmAccountDeleteDialog } from "./components/ConfirmAccountDeleteDialog";
 import { SupportCenter } from "./components/SupportCenter";
 import { api } from "./services/api";
 import { QueryResponse, Document, Conversation } from "./types/api";
@@ -50,8 +51,11 @@ function App() {
   const [pendingDeleteDocument, setPendingDeleteDocument] =
     useState<Document | null>(null);
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
+  const [isConfirmAccountDeleteOpen, setIsConfirmAccountDeleteOpen] =
+    useState(false);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const previousIdentityKeyRef = useRef<string | null>(null);
+  const isCompletingGuestUpgradeRef = useRef(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -114,7 +118,43 @@ function App() {
 
     previousIdentityKeyRef.current = nextIdentityKey;
 
-    if (authState === "authenticated" && identity?.tenant_id) {
+    const pendingGuestUpgrade = api.getPendingGuestUpgrade();
+
+    if (
+      identity?.identity_type !== "guest" &&
+      pendingGuestUpgrade !== null &&
+      identity?.email?.trim().toLowerCase() === pendingGuestUpgrade.email &&
+      !isCompletingGuestUpgradeRef.current
+    ) {
+      isCompletingGuestUpgradeRef.current = true;
+
+      void (async () => {
+        try {
+          // Guest signup may require email verification. The signed upgrade ticket
+          // survives that round trip and is redeemed only on the first verified
+          // login for the same signup email. Existing-account logins never have a
+          // matching ticket, so they never merge guest conversations.
+          await api.prepareGuestUpgrade();
+          api.clearPendingGuestUpgrade();
+          await api.refreshIdentitySession();
+        } catch (error) {
+          toast.error("Failed to complete guest upgrade");
+        } finally {
+          isCompletingGuestUpgradeRef.current = false;
+        }
+      })();
+      return;
+    }
+
+    if (
+      authState === "authenticated" &&
+      identity?.tenant_id &&
+      (
+        identity.identity_type === "guest" ||
+        pendingGuestUpgrade === null ||
+        identity?.email?.trim().toLowerCase() !== pendingGuestUpgrade.email
+      )
+    ) {
       loadDocuments();
       loadConversations();
     }
@@ -322,8 +362,51 @@ function App() {
     setIsAuthDialogOpen(false);
     setPendingDeleteDocument(null);
     setIsConfirmDeleteOpen(false);
+    setIsConfirmAccountDeleteOpen(false);
     await loadDocuments();
     await loadConversations();
+  };
+
+  const handleDeleteAccount = async () => {
+    if (identity?.identity_type === "guest") {
+      return;
+    }
+    setIsConfirmAccountDeleteOpen(true);
+  };
+
+  const handleCancelDeleteAccount = () => {
+    setIsConfirmAccountDeleteOpen(false);
+  };
+
+  const handleConfirmDeleteAccount = async () => {
+    setIsConfirmAccountDeleteOpen(false);
+
+    try {
+      await api.deleteAccount();
+      setAuthState(api.getAuthState());
+      setIdentity(api.getIdentity());
+      setCurrentResponse(null);
+      setDocuments([]);
+      setConversations([]);
+      setSelectedConversationId(null);
+      setSelectedConversationDetail(null);
+      setCurrentView("query");
+      setSubmittedQuery("");
+      setIsMobileDrawerOpen(false);
+      setIsSettingsOpen(false);
+      setIsSupportCenterOpen(false);
+      setIsAuthDialogOpen(false);
+      setPendingDeleteDocument(null);
+      setIsConfirmDeleteOpen(false);
+      setIsConfirmAccountDeleteOpen(false);
+      await loadDocuments();
+      await loadConversations();
+      toast.success("Account deleted");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to delete account",
+      );
+    }
   };
 
   if (!isAuthReady) {
@@ -541,6 +624,11 @@ function App() {
             onClose={() => setIsSettingsOpen(false)}
             settings={settings}
             onUpdateSettings={handleUpdateSettings}
+            canDeleteAccount={
+              identity?.identity_type === "authenticated" &&
+              Boolean(identity.user_id && identity.tenant_id)
+            }
+            onDeleteAccount={handleDeleteAccount}
           />
 
           <SupportCenter
@@ -557,6 +645,12 @@ function App() {
             document={pendingDeleteDocument}
             onConfirm={handleConfirmDeleteDocument}
             onCancel={handleCancelDeleteDocument}
+          />
+
+          <ConfirmAccountDeleteDialog
+            isOpen={isConfirmAccountDeleteOpen}
+            onConfirm={handleConfirmDeleteAccount}
+            onCancel={handleCancelDeleteAccount}
           />
 
           {/* Main Content Area */}

@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import shutil
 import sqlite3
 from typing import Any, Dict, Optional
 
@@ -288,3 +289,124 @@ def save_query_result(*, tenant_id: str, conversation_id: str, payload: Dict[str
 
     finally:
         conn.close()
+
+
+def transfer_conversations(*, source_tenant_id: str, target_tenant_id: str) -> int:
+    if not source_tenant_id or not target_tenant_id:
+        raise ValueError("source_tenant_id and target_tenant_id are required")
+    if source_tenant_id == target_tenant_id:
+        return 0
+
+    source_db_path = _tenant_db_path(source_tenant_id)
+    if not os.path.isfile(source_db_path):
+        return 0
+
+    target_db_path = init_db(target_tenant_id)
+    target_conn = _connect(target_db_path)
+
+    try:
+        existing_count_row = target_conn.execute(
+            "SELECT COUNT(*) AS count FROM conversations WHERE tenant_id = ?",
+            (target_tenant_id,),
+        ).fetchone()
+        existing_count = int(existing_count_row["count"]) if existing_count_row else 0
+        if existing_count > 0:
+            return -1
+
+        source_conn = _connect(source_db_path)
+        try:
+            source_conversations = source_conn.execute(
+                """
+                SELECT conversation_id, title, created_at, last_activity_at
+                FROM conversations
+                WHERE tenant_id = ?
+                ORDER BY created_at ASC
+                """,
+                (source_tenant_id,),
+            ).fetchall()
+
+            if not source_conversations:
+                return 0
+
+            source_queries = source_conn.execute(
+                """
+                SELECT
+                  request_id,
+                  conversation_id,
+                  created_at,
+                  query,
+                  mode,
+                  answer,
+                  citations_json,
+                  artifacts_json,
+                  debug_json,
+                  response_json
+                FROM queries
+                WHERE tenant_id = ?
+                ORDER BY created_at ASC
+                """,
+                (source_tenant_id,),
+            ).fetchall()
+        finally:
+            source_conn.close()
+
+        target_conn.execute("BEGIN")
+        try:
+            for row in source_conversations:
+                target_conn.execute(
+                    """
+                    INSERT INTO conversations (
+                      tenant_id, conversation_id, title, created_at, last_activity_at
+                    )
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        target_tenant_id,
+                        row["conversation_id"],
+                        row["title"],
+                        row["created_at"],
+                        row["last_activity_at"],
+                    ),
+                )
+
+            for row in source_queries:
+                target_conn.execute(
+                    """
+                    INSERT INTO queries (
+                      tenant_id, request_id, conversation_id, created_at,
+                      query, mode, answer, citations_json, artifacts_json,
+                      debug_json, response_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        target_tenant_id,
+                        row["request_id"],
+                        row["conversation_id"],
+                        row["created_at"],
+                        row["query"],
+                        row["mode"],
+                        row["answer"],
+                        row["citations_json"],
+                        row["artifacts_json"],
+                        row["debug_json"],
+                        row["response_json"],
+                    ),
+                )
+            target_conn.commit()
+        except Exception:
+            target_conn.rollback()
+            raise
+
+        return len(source_conversations)
+    finally:
+        target_conn.close()
+
+
+def delete_tenant_data(tenant_id: str) -> None:
+    if not tenant_id:
+        raise ValueError("tenant_id is required")
+
+    tenant_dir = os.path.join(DB_ROOT, tenant_id)
+    if os.path.isdir(tenant_dir):
+        shutil.rmtree(tenant_dir)

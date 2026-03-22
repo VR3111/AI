@@ -2,12 +2,16 @@ import json
 import os
 import time
 import uuid
+from typing import Any
 from urllib.request import Request as UrlRequest, urlopen
 
+from dotenv import load_dotenv
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from jose import JWTError, jwk, jwt
 from jose.utils import base64url_decode
+
+load_dotenv()
 
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
@@ -17,6 +21,7 @@ SUPABASE_JWKS_URL = (
 )
 SUPABASE_JWT_AUDIENCE = os.getenv("SUPABASE_JWT_AUDIENCE", "authenticated")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 LEGACY_JWT_SECRET = os.getenv("P1_JWT_SECRET")
 GUEST_SESSION_SECRET = os.getenv("P1_GUEST_SESSION_SECRET") or LEGACY_JWT_SECRET
 GUEST_SESSION_COOKIE_NAME = os.getenv("P1_GUEST_SESSION_COOKIE_NAME", "p1_guest_session")
@@ -28,9 +33,24 @@ GUEST_SESSION_COOKIE_MAX_AGE_SECONDS = int(
 )
 GUEST_SESSION_ISSUER = os.getenv("P1_GUEST_SESSION_ISSUER", "p1-guest")
 GUEST_SESSION_AUDIENCE = os.getenv("P1_GUEST_SESSION_AUDIENCE", "p1-guest")
+GUEST_UPGRADE_TICKET_ISSUER = os.getenv(
+    "P1_GUEST_UPGRADE_TICKET_ISSUER", "p1-guest-upgrade"
+)
+GUEST_UPGRADE_TICKET_AUDIENCE = os.getenv(
+    "P1_GUEST_UPGRADE_TICKET_AUDIENCE", "p1-guest-upgrade"
+)
+GUEST_UPGRADE_TICKET_TTL_SECONDS = int(
+    os.getenv("P1_GUEST_UPGRADE_TICKET_TTL_SECONDS", str(60 * 60 * 24 * 7))
+)
 JWKS_CACHE_TTL_SECONDS = 300
 
-EXEMPT_PATHS = {"/health", "/auth/session", "/auth/guest-session", "/auth/guest-session/upgrade"}
+EXEMPT_PATHS = {
+    "/health",
+    "/auth/session",
+    "/auth/guest-session",
+    "/auth/guest-session/upgrade",
+    "/auth/guest-session/upgrade-ticket",
+}
 
 _jwks_cache: dict | None = None
 _jwks_cache_fetched_at = 0.0
@@ -150,6 +170,33 @@ def _fetch_supabase_user(token: str) -> dict:
         return json.loads(response.read().decode("utf-8"))
 
 
+def _supabase_admin_request(path: str, method: str = "GET") -> Any:
+    supabase_url = os.getenv("SUPABASE_URL", SUPABASE_URL).rstrip("/")
+    service_role_key = os.getenv(
+        "SUPABASE_SERVICE_ROLE_KEY", SUPABASE_SERVICE_ROLE_KEY
+    )
+
+    if not supabase_url or not service_role_key:
+        raise RuntimeError("Supabase admin auth is not configured")
+
+    request = UrlRequest(
+        f"{supabase_url}{path}",
+        method=method,
+        headers={
+            "apikey": service_role_key,
+            "Authorization": f"Bearer {service_role_key}",
+        },
+    )
+
+    with urlopen(request, timeout=10) as response:
+        if response.status == 204:
+            return None
+        body = response.read()
+        if not body:
+            return None
+        return json.loads(body.decode("utf-8"))
+
+
 def _resolve_authenticated_payload(token: str) -> dict:
     try:
         payload = _verify_supabase_token(token)
@@ -184,6 +231,13 @@ def _require_guest_session_secret() -> str:
     return GUEST_SESSION_SECRET
 
 
+def _require_authenticated_bearer_token(request: Request) -> str:
+    auth = request.headers.get("Authorization")
+    if not auth or not auth.startswith("Bearer "):
+        raise JWTError("Authenticated bearer token required")
+    return auth.split(" ", 1)[1]
+
+
 def _issue_guest_session_payload() -> dict:
     now = int(time.time())
     guest_user_id = f"guest-user-{uuid.uuid4()}"
@@ -207,6 +261,49 @@ def issue_guest_session() -> tuple[str, dict]:
     payload = _issue_guest_session_payload()
     token = jwt.encode(payload, _require_guest_session_secret(), algorithm="HS256")
     return token, payload
+
+
+def issue_guest_upgrade_ticket(*, guest_payload: dict, email: str) -> str:
+    normalized_email = email.strip().lower()
+    if not normalized_email:
+        raise ValueError("email is required")
+
+    now = int(time.time())
+    payload = {
+        "sub": f"guest-upgrade-{uuid.uuid4()}",
+        "guest_tenant_id": guest_payload.get("guest_tenant_id") or guest_payload.get("tenant_id"),
+        "guest_user_id": guest_payload.get("guest_user_id") or guest_payload.get("sub"),
+        "email": normalized_email,
+        "identity_type": "guest_upgrade",
+        "iss": GUEST_UPGRADE_TICKET_ISSUER,
+        "aud": GUEST_UPGRADE_TICKET_AUDIENCE,
+        "iat": now,
+        "nbf": now,
+        "exp": now + GUEST_UPGRADE_TICKET_TTL_SECONDS,
+    }
+    return jwt.encode(payload, _require_guest_session_secret(), algorithm="HS256")
+
+
+def decode_guest_upgrade_ticket(ticket: str) -> dict:
+    payload = jwt.decode(
+        ticket,
+        _require_guest_session_secret(),
+        algorithms=["HS256"],
+        issuer=GUEST_UPGRADE_TICKET_ISSUER,
+        audience=GUEST_UPGRADE_TICKET_AUDIENCE,
+    )
+    if payload.get("identity_type") != "guest_upgrade":
+        raise JWTError("Invalid guest upgrade ticket")
+    return payload
+
+
+def get_authenticated_user(request: Request) -> dict:
+    token = _require_authenticated_bearer_token(request)
+    return _fetch_supabase_user(token)
+
+
+def delete_supabase_user(user_id: str) -> None:
+    _supabase_admin_request(f"/auth/v1/admin/users/{user_id}", method="DELETE")
 
 
 def _decode_guest_session(token: str) -> dict:
@@ -313,6 +410,14 @@ def set_guest_session_cookie(response, token: str) -> None:
         samesite="lax",
         max_age=GUEST_SESSION_COOKIE_MAX_AGE_SECONDS,
         path="/",
+    )
+
+
+def clear_guest_session_cookie(response) -> None:
+    response.delete_cookie(
+        key=GUEST_SESSION_COOKIE_NAME,
+        path="/",
+        samesite="lax",
     )
 
 
