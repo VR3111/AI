@@ -29,6 +29,12 @@ const PENDING_GUEST_UPGRADE_STORAGE_KEY = "p1.pending_guest_upgrade";
 let currentConversationId: string | null = null;
 let currentIdentity = readStoredIdentity();
 
+type PendingGuestUpgrade = {
+  ticket: string;
+  email: string;
+  guest_tenant_id: string;
+};
+
 function readStoredIdentity(): IdentitySession | null {
   const raw = window.localStorage.getItem(IDENTITY_STORAGE_KEY);
   if (!raw) {
@@ -186,6 +192,11 @@ async function ensureIdentity(): Promise<IdentitySession> {
 
   const response = await fetchSession(endpoint, { method });
   if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      await handleIdentityFailure();
+    } else {
+      writeStoredIdentity(null);
+    }
     const message = await response.text();
     throw new Error(message || "Failed to establish session");
   }
@@ -264,10 +275,14 @@ export const api = {
     return currentIdentity;
   },
 
-  markPendingGuestUpgrade(ticket: string, email: string) {
+  markPendingGuestUpgrade(ticket: string, email: string, guestTenantId: string) {
     window.localStorage.setItem(
       PENDING_GUEST_UPGRADE_STORAGE_KEY,
-      JSON.stringify({ ticket, email: email.trim().toLowerCase() }),
+      JSON.stringify({
+        ticket,
+        email: email.trim().toLowerCase(),
+        guest_tenant_id: guestTenantId,
+      }),
     );
   },
 
@@ -279,23 +294,30 @@ export const api = {
     return Boolean(window.localStorage.getItem(PENDING_GUEST_UPGRADE_STORAGE_KEY));
   },
 
-  getPendingGuestUpgrade(): { ticket: string; email: string } | null {
+  getPendingGuestUpgrade(): PendingGuestUpgrade | null {
     const raw = window.localStorage.getItem(PENDING_GUEST_UPGRADE_STORAGE_KEY);
     if (!raw) {
       return null;
     }
 
     try {
-      const parsed = JSON.parse(raw) as { ticket?: string; email?: string };
+      const parsed = JSON.parse(raw) as {
+        ticket?: string;
+        email?: string;
+        guest_tenant_id?: string;
+      };
       if (
         typeof parsed.ticket === "string" &&
         parsed.ticket.trim() &&
         typeof parsed.email === "string" &&
-        parsed.email.trim()
+        parsed.email.trim() &&
+        typeof parsed.guest_tenant_id === "string" &&
+        parsed.guest_tenant_id.trim()
       ) {
         return {
           ticket: parsed.ticket,
           email: parsed.email.trim().toLowerCase(),
+          guest_tenant_id: parsed.guest_tenant_id.trim(),
         };
       }
 

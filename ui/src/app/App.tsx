@@ -119,10 +119,22 @@ function App() {
     previousIdentityKeyRef.current = nextIdentityKey;
 
     const pendingGuestUpgrade = api.getPendingGuestUpgrade();
+    const hasMatchingPendingGuestUpgrade =
+      pendingGuestUpgrade !== null &&
+      identity?.pending_guest_tenant_id === pendingGuestUpgrade.guest_tenant_id;
 
     if (
       identity?.identity_type !== "guest" &&
       pendingGuestUpgrade !== null &&
+      identity?.pending_guest_tenant_id !== null &&
+      !hasMatchingPendingGuestUpgrade
+    ) {
+      api.clearPendingGuestUpgrade();
+    }
+
+    if (
+      identity?.identity_type !== "guest" &&
+      hasMatchingPendingGuestUpgrade &&
       identity?.email?.trim().toLowerCase() === pendingGuestUpgrade.email &&
       !isCompletingGuestUpgradeRef.current
     ) {

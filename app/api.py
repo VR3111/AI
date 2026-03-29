@@ -238,12 +238,13 @@ def delete_account(request: Request):
 
     identity_payload = getattr(request.state, "identity_payload", None) or authenticated_payload
     tenant_id = str(getattr(request.state, "tenant_id", "") or identity_payload.get("tenant_id") or "")
-    user_id = str(
-        identity_payload.get("sub")
-        or identity_payload.get("id")
-        or getattr(request.state, "user_id", "")
-        or ""
-    )
+
+    try:
+        authenticated_user = get_authenticated_user(request)
+    except Exception:
+        return JSONResponse(status_code=401, content={"detail": "Invalid authenticated user session"})
+
+    user_id = str(authenticated_user.get("id") or identity_payload.get("sub") or identity_payload.get("id") or "")
     if not user_id or not tenant_id:
         return JSONResponse(status_code=400, content={"detail": "Authenticated account is missing identifiers"})
 

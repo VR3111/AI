@@ -2,17 +2,18 @@ import json
 import os
 import time
 import uuid
+import ssl
 from typing import Any
+from urllib.error import HTTPError, URLError
 from urllib.request import Request as UrlRequest, urlopen
 
+import certifi
 from dotenv import load_dotenv
 from fastapi import Request
 from fastapi.responses import JSONResponse
-from jose import JWTError, jwk, jwt
-from jose.utils import base64url_decode
+from jose import JWTError, jwt
 
 load_dotenv()
-
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_ISSUER = f"{SUPABASE_URL}/auth/v1" if SUPABASE_URL else ""
@@ -54,12 +55,15 @@ EXEMPT_PATHS = {
 
 _jwks_cache: dict | None = None
 _jwks_cache_fetched_at = 0.0
+_ssl_context = ssl.create_default_context(cafile=certifi.where())
 
 
-def _fetch_jwks() -> dict:
+def _fetch_jwks(force_refresh: bool = False) -> dict:
     global _jwks_cache, _jwks_cache_fetched_at
 
     if (
+        not force_refresh
+        and
         _jwks_cache is not None
         and time.time() - _jwks_cache_fetched_at < JWKS_CACHE_TTL_SECONDS
     ):
@@ -68,10 +72,19 @@ def _fetch_jwks() -> dict:
     if not SUPABASE_JWKS_URL:
         raise RuntimeError("SUPABASE_URL is not set")
 
-    with urlopen(SUPABASE_JWKS_URL, timeout=5) as response:
-        _jwks_cache = json.loads(response.read().decode("utf-8"))
-        _jwks_cache_fetched_at = time.time()
-        return _jwks_cache
+    try:
+        with urlopen(SUPABASE_JWKS_URL, timeout=5, context=_ssl_context) as response:
+            raw_body = response.read().decode("utf-8")
+            parsed = json.loads(raw_body)
+
+            if isinstance(parsed, list):
+                parsed = {"keys": parsed}
+
+            _jwks_cache = parsed
+            _jwks_cache_fetched_at = time.time()
+            return _jwks_cache
+    except Exception:
+        raise
 
 
 def _verify_supabase_token(token: str) -> dict:
@@ -93,18 +106,20 @@ def _verify_supabase_token(token: str) -> dict:
     keys = _fetch_jwks().get("keys", [])
     key_data = next((candidate for candidate in keys if candidate.get("kid") == key_id), None)
     if not key_data:
+        keys = _fetch_jwks(force_refresh=True).get("keys", [])
+        key_data = next((candidate for candidate in keys if candidate.get("kid") == key_id), None)
+
+    if not key_data:
         raise JWTError("Signing key not found")
 
-    signing_input, encoded_signature = token.rsplit(".", 1)
-    decoded_signature = base64url_decode(encoded_signature.encode("utf-8"))
-    public_key = jwk.construct(key_data, algorithm=algorithm)
-
-    if not public_key.verify(signing_input.encode("utf-8"), decoded_signature):
-        raise JWTError("Invalid token signature")
-
-    payload = jwt.get_unverified_claims(token)
-    _validate_claims(payload)
-    return payload
+    return jwt.decode(
+        token,
+        key_data,
+        algorithms=[algorithm] if algorithm else None,
+        audience=SUPABASE_JWT_AUDIENCE or None,
+        issuer=SUPABASE_ISSUER or None,
+        options={"verify_aud": bool(SUPABASE_JWT_AUDIENCE)},
+    )
 
 
 def _validate_claims(payload: dict) -> None:
@@ -166,7 +181,7 @@ def _fetch_supabase_user(token: str) -> dict:
         },
     )
 
-    with urlopen(request, timeout=5) as response:
+    with urlopen(request, timeout=5, context=_ssl_context) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
@@ -188,26 +203,75 @@ def _supabase_admin_request(path: str, method: str = "GET") -> Any:
         },
     )
 
-    with urlopen(request, timeout=10) as response:
-        if response.status == 204:
-            return None
-        body = response.read()
-        if not body:
-            return None
-        return json.loads(body.decode("utf-8"))
+    try:
+        with urlopen(request, timeout=10, context=_ssl_context) as response:
+            if response.status == 204:
+                return None
+            body = response.read()
+            if not body:
+                return None
+            return json.loads(body.decode("utf-8"))
+    except HTTPError as error:
+        body = error.read().decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"Supabase admin request failed: method={method} url={supabase_url}{path} "
+            f"status={error.code} body={body}"
+        ) from error
+    except URLError as error:
+        raise RuntimeError(
+            f"Supabase admin request failed: method={method} url={supabase_url}{path} "
+            f"reason={error.reason}"
+        ) from error
 
 
 def _resolve_authenticated_payload(token: str) -> dict:
     try:
         payload = _verify_supabase_token(token)
         if _extract_tenant_id(payload):
-            return payload
+            if payload.get("email") and (
+                payload.get("name")
+                or payload.get("preferred_username")
+                or payload.get("email")
+            ):
+                return payload
+
+            user = _fetch_supabase_user(token)
+            tenant_id = _extract_tenant_id(user)
+            if not tenant_id:
+                raise JWTError("tenant_id missing in token")
+
+            return {
+                "sub": user.get("id") or payload.get("sub"),
+                "email": user.get("email"),
+                "name": user.get("user_metadata", {}).get("name")
+                if isinstance(user.get("user_metadata"), dict)
+                else None,
+                "preferred_username": user.get("email"),
+                "tenant_id": tenant_id,
+                "app_metadata": user.get("app_metadata"),
+                "user_metadata": user.get("user_metadata"),
+            }
     except Exception:
         try:
             payload = jwt.get_unverified_claims(token)
             _validate_claims(payload)
             if _extract_tenant_id(payload):
-                return payload
+                user = _fetch_supabase_user(token)
+                tenant_id = _extract_tenant_id(user)
+                if not tenant_id:
+                    raise JWTError("tenant_id missing in token")
+
+                return {
+                    "sub": user.get("id") or payload.get("sub"),
+                    "email": user.get("email"),
+                    "name": user.get("user_metadata", {}).get("name")
+                    if isinstance(user.get("user_metadata"), dict)
+                    else None,
+                    "preferred_username": user.get("email"),
+                    "tenant_id": tenant_id,
+                    "app_metadata": user.get("app_metadata"),
+                    "user_metadata": user.get("user_metadata"),
+                }
         except Exception:
             pass
 

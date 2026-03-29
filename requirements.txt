@@ -6,3 +6,4 @@ chromadb
 sentence-transformers
 python-multipart
 python-jose[cryptography]
+certifi

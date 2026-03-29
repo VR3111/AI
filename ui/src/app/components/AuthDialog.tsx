@@ -76,16 +76,22 @@ export function AuthDialog({ isOpen, onClose }: AuthDialogProps) {
                 // We mint a signed backend ticket before signup so the transfer can
                 // complete later after email verification and the first real login.
                 let upgradeTicket: string | null = null;
+                let upgradeGuestTenantId: string | null = null;
                 if (shouldUpgradeGuest) {
                   const ticketResponse = await api.createGuestUpgradeTicket(
                     email.trim(),
                   );
                   upgradeTicket = ticketResponse.ticket;
+                  upgradeGuestTenantId = ticketResponse.guest_tenant_id;
                 }
 
                 const result = await supabase.auth.signUp(email, password);
-                if (shouldUpgradeGuest && upgradeTicket) {
-                  api.markPendingGuestUpgrade(upgradeTicket, email.trim());
+                if (shouldUpgradeGuest && upgradeTicket && upgradeGuestTenantId) {
+                  api.markPendingGuestUpgrade(
+                    upgradeTicket,
+                    email.trim(),
+                    upgradeGuestTenantId,
+                  );
                 }
                 if (result.needsEmailConfirmation) {
                   setNotice("Check your email to confirm your account.");
