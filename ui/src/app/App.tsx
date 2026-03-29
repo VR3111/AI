@@ -215,6 +215,7 @@ function App() {
   };
 
   const handleNewConversation = () => {
+    api.resetConversation();
     setSelectedConversationId(null);
     setSelectedConversationDetail(null);
     setCurrentView("query");
@@ -229,7 +230,7 @@ function App() {
 
     try {
       console.log("APP_BEFORE_AWAIT_SUBMIT_QUERY");
-      const response = await api.submitQuery(query);
+      const response = await api.submitQuery(query, selectedConversationId ?? undefined);
 
       setSubmittedQuery(query);
       setCurrentResponse(response);

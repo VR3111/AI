@@ -378,9 +378,7 @@ export const api = {
     const convId =
       conversationId || currentConversationId || generateConversationId();
 
-    if (!conversationId) {
-      currentConversationId = convId;
-    }
+    currentConversationId = convId;
 
     return apiCall<QueryResponse>("/query", {
       method: "POST",

@@ -3,6 +3,7 @@ import json
 import re
 import shutil
 import sqlite3
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 DB_ROOT = os.path.join("data", "tenants")
@@ -63,6 +64,29 @@ CREATE TABLE IF NOT EXISTS queries (
 
 CREATE INDEX IF NOT EXISTS idx_queries_conv_created
   ON queries(tenant_id, conversation_id, created_at);
+
+CREATE TABLE IF NOT EXISTS document_analyses (
+  tenant_id TEXT NOT NULL,
+  document_id TEXT NOT NULL,
+  filename TEXT NOT NULL,
+  source_path TEXT NOT NULL,
+  source_sha256 TEXT NOT NULL,
+  file_size_bytes INTEGER NOT NULL,
+  file_mtime REAL NOT NULL,
+  analysis_version TEXT NOT NULL,
+  status TEXT NOT NULL,
+  parser_json TEXT NOT NULL,
+  clauses_json TEXT NOT NULL,
+  entities_json TEXT NOT NULL,
+  risks_json TEXT NOT NULL,
+  error_message TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (tenant_id, document_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_document_analyses_updated
+  ON document_analyses(tenant_id, updated_at);
 """
 
 _TITLE_STOPWORDS = {
@@ -177,6 +201,17 @@ def _backfill_missing_conversation_titles(conn: sqlite3.Connection) -> None:
         )
 
 
+def _ensure_document_analysis_columns(conn: sqlite3.Connection) -> None:
+    columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(document_analyses)").fetchall()
+    }
+    if columns and "risks_json" not in columns:
+        conn.execute(
+            "ALTER TABLE document_analyses ADD COLUMN risks_json TEXT NOT NULL DEFAULT '[]'"
+        )
+
+
 def init_db(tenant_id: str) -> str:
     """
     Ensures the tenant DB exists and schema is applied.
@@ -193,11 +228,16 @@ def init_db(tenant_id: str) -> str:
     try:
         conn.executescript(_SCHEMA)
         _ensure_conversation_title_column(conn)
+        _ensure_document_analysis_columns(conn)
         _backfill_missing_conversation_titles(conn)
     finally:
         conn.close()
 
     return db_path
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 # ----------------------------
@@ -241,6 +281,8 @@ def save_query_result(*, tenant_id: str, conversation_id: str, payload: Dict[str
     conn = _connect(db_path)
 
     try:
+        conn.execute("BEGIN")
+
         # Upsert conversation
         conn.execute(
             """
@@ -286,7 +328,150 @@ def save_query_result(*, tenant_id: str, conversation_id: str, payload: Dict[str
         )
 
         _backfill_missing_conversation_titles(conn)
+        conn.commit()
 
+    except Exception:
+        conn.rollback()
+        raise
+
+    finally:
+        conn.close()
+
+
+def get_document_analysis(tenant_id: str, document_id: str) -> Optional[Dict[str, Any]]:
+    db_path = init_db(tenant_id)
+    conn = _connect(db_path)
+    try:
+        row = conn.execute(
+            """
+            SELECT *
+            FROM document_analyses
+            WHERE tenant_id = ?
+              AND document_id = ?
+            """,
+            (tenant_id, document_id),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def upsert_document_analysis(
+    *,
+    tenant_id: str,
+    document_id: str,
+    filename: str,
+    source_path: str,
+    source_sha256: str,
+    file_size_bytes: int,
+    file_mtime: float,
+    analysis_version: str,
+    status: str,
+    parser_payload: Dict[str, Any] | None,
+    clauses: list[Dict[str, Any]] | None,
+    entities: list[Dict[str, Any]] | None,
+    risks: list[Dict[str, Any]] | None = None,
+    error_message: str | None = None,
+) -> None:
+    db_path = init_db(tenant_id)
+    conn = _connect(db_path)
+    now = _now_iso()
+
+    parser_json = json.dumps(parser_payload or {}, ensure_ascii=False)
+    clauses_json = json.dumps(clauses or [], ensure_ascii=False)
+    entities_json = json.dumps(entities or [], ensure_ascii=False)
+    risks_json = json.dumps(risks or [], ensure_ascii=False)
+
+    try:
+        conn.execute(
+            """
+            INSERT INTO document_analyses (
+              tenant_id, document_id, filename, source_path, source_sha256,
+              file_size_bytes, file_mtime, analysis_version, status,
+              parser_json, clauses_json, entities_json, risks_json, error_message,
+              created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(tenant_id, document_id) DO UPDATE SET
+              filename = excluded.filename,
+              source_path = excluded.source_path,
+              source_sha256 = excluded.source_sha256,
+              file_size_bytes = excluded.file_size_bytes,
+              file_mtime = excluded.file_mtime,
+              analysis_version = excluded.analysis_version,
+              status = excluded.status,
+              parser_json = excluded.parser_json,
+              clauses_json = excluded.clauses_json,
+              entities_json = excluded.entities_json,
+              risks_json = excluded.risks_json,
+              error_message = excluded.error_message,
+              updated_at = excluded.updated_at
+            """,
+            (
+                tenant_id,
+                document_id,
+                filename,
+                source_path,
+                source_sha256,
+                file_size_bytes,
+                file_mtime,
+                analysis_version,
+                status,
+                parser_json,
+                clauses_json,
+                entities_json,
+                risks_json,
+                error_message,
+                now,
+                now,
+            ),
+        )
+    finally:
+        conn.close()
+
+
+def delete_document_analysis(tenant_id: str, document_id: str) -> None:
+    db_path = init_db(tenant_id)
+    conn = _connect(db_path)
+    try:
+        conn.execute(
+            """
+            DELETE FROM document_analyses
+            WHERE tenant_id = ?
+              AND document_id = ?
+            """,
+            (tenant_id, document_id),
+        )
+    finally:
+        conn.close()
+
+
+def prune_document_analyses(tenant_id: str, active_document_ids: set[str]) -> None:
+    db_path = init_db(tenant_id)
+    conn = _connect(db_path)
+    try:
+        rows = conn.execute(
+            """
+            SELECT document_id
+            FROM document_analyses
+            WHERE tenant_id = ?
+            """,
+            (tenant_id,),
+        ).fetchall()
+        stale_document_ids = [
+            str(row["document_id"])
+            for row in rows
+            if str(row["document_id"]) not in active_document_ids
+        ]
+        for document_id in stale_document_ids:
+            conn.execute(
+                """
+                DELETE FROM document_analyses
+                WHERE tenant_id = ?
+                  AND document_id = ?
+                """,
+                (tenant_id, document_id),
+            )
     finally:
         conn.close()
 

@@ -421,7 +421,7 @@ def _send_support_email(
 # Query classification helpers
 # =====================================================
 def is_explanatory_query(query: str) -> bool:
-    return bool(re.match(r"^\s*(how|why|in what way|in which way)\b", query, re.I))
+    return bool(re.match(r"^\s*(how(?!\s+many\b)|why|in what way|in which way)\b", query, re.I))
 
 
 def mentions_external_entity(query: str) -> bool:
@@ -466,7 +466,174 @@ def refusal_message(reason: str) -> str:
 # =====================================================
 # Citations builder
 # =====================================================
-def build_citations(results: list[tuple[Any, float]]) -> list[dict]:
+def _wants_exact_answer(query: str) -> bool:
+    return bool(
+        re.search(
+            r"\bquote\b|\bexact(?:ly)?\b|\bverbatim\b|\bamount\b|as written",
+            query,
+            re.I,
+        )
+    )
+
+
+QUESTION_STOPWORDS = {
+    "the",
+    "a",
+    "an",
+    "and",
+    "or",
+    "any",
+    "there",
+    "document",
+    "card",
+    "agreement",
+    "american",
+    "express",
+    "gold",
+    "what",
+    "how",
+    "many",
+    "is",
+    "are",
+    "was",
+    "were",
+    "do",
+    "does",
+    "did",
+    "within",
+    "before",
+    "after",
+    "apply",
+    "applicable",
+    "written",
+    "exactly",
+    "quote",
+    "answer",
+}
+
+
+def _wants_bounded_answer(query: str) -> bool:
+    return bool(
+        re.search(
+            r"\bhow many\b|\blimit\b|\bmaximum\b|\bminimum\b|\bfee\b|\bamount\b|\bthreshold\b|\bcount\b|\bwithin\b|\bbefore\b|\bafter\b",
+            query,
+            re.I,
+        )
+    )
+
+
+def _normalize_for_match(text: str) -> str:
+    normalized = text.lower().replace("-\n", "").replace("\n", " ")
+    normalized = re.sub(r"[^a-z0-9$]+", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return normalized
+
+
+def _content_tokens(text: str) -> list[str]:
+    tokens: list[str] = []
+    for token in re.findall(r"[a-z0-9]+", _normalize_for_match(text)):
+        if len(token) <= 2 or token in QUESTION_STOPWORDS:
+            continue
+        if token.endswith("s") and len(token) > 4:
+            token = token[:-1]
+        if token not in tokens:
+            tokens.append(token)
+    return tokens
+
+
+def _focus_phrase_variants(focus_phrase: str | None) -> list[str]:
+    if not focus_phrase:
+        return []
+
+    variants: list[str] = []
+    base = focus_phrase.strip().lower()
+    for candidate in (
+        base,
+        re.sub(r"\bfees?\b$", "", base).strip(),
+        re.sub(r"\b(?:within|before|after|when|if)\b.+$", "", base).strip(),
+        re.split(r"\b(?:is|are|was|were|can|could|should)\b", base, 1)[0].strip(),
+    ):
+        if not candidate or candidate in variants:
+            continue
+        if candidate != focus_phrase.strip().lower() and len(candidate.split()) < 2:
+            continue
+        variants.append(candidate)
+    return variants
+
+
+def _find_field_value_start(text: str, focus_phrase: str | None) -> int | None:
+    for variant in _focus_phrase_variants(focus_phrase):
+        patterns = [
+            re.compile(
+                r"\b"
+                + r"\s+".join(re.escape(token) for token in variant.split())
+                + r"\b\s*:\s*([^\n]{1,120})",
+                re.I,
+            ),
+            re.compile(
+                r"\b"
+                + r"\s+".join(re.escape(token) for token in variant.split())
+                + r"\b\s+((?:up to\s+)?\$\s*\d[\d,]*(?:\.\d+)?|none\b|no\s+ne\b)",
+                re.I,
+            ),
+        ]
+
+        for pattern in patterns:
+            match = pattern.search(text)
+            if not match:
+                continue
+
+            value = match.group(1).strip()
+            if not value:
+                continue
+
+            if re.match(r"(this fee|the fee|please refer)\b", value, re.I):
+                continue
+
+            return match.start()
+
+    return None
+
+
+def _build_snippet(text: str, query: str) -> str:
+    if not text:
+        return ""
+
+    lowered = text.lower()
+    focus_phrase = _extract_focus_phrase(query)
+    wants_exact_value = _wants_exact_answer(query)
+    wants_bounded_answer = _wants_bounded_answer(query)
+    focus_tokens = (
+        _content_tokens(" ".join(_focus_phrase_variants(focus_phrase)))
+        if focus_phrase
+        else _content_tokens(query)
+    )
+
+    snippet_start = 0
+    field_value_start = _find_field_value_start(text, focus_phrase)
+    if field_value_start is not None:
+        snippet_start = max(field_value_start - 80, 0)
+    elif focus_phrase:
+        for variant in _focus_phrase_variants(focus_phrase):
+            focus_index = lowered.find(variant)
+            if focus_index >= 0:
+                snippet_start = max(focus_index - 80, 0)
+                break
+        if snippet_start == 0 and wants_bounded_answer:
+            for token in focus_tokens:
+                focus_index = lowered.find(token)
+                if focus_index >= 0:
+                    snippet_start = max(focus_index - 80, 0)
+                    break
+    elif wants_exact_value:
+        amount_match = re.search(r"\$\s*\d[\d,]*(?:\.\d+)?", text)
+        if amount_match:
+            snippet_start = max(amount_match.start() - 80, 0)
+
+    return text[snippet_start:snippet_start + 300]
+
+
+def build_citations(results: list[tuple[Any, float]], query: str) -> list[dict]:
     citations: list[dict] = []
     for doc, score in results:
         citations.append(
@@ -474,10 +641,227 @@ def build_citations(results: list[tuple[Any, float]]) -> list[dict]:
                 "source": doc.metadata.get("source"),
                 "page": doc.metadata.get("page"),
                 "score": score,
-                "snippet": (doc.page_content or "")[:300],
+                "snippet": _build_snippet(doc.page_content or "", query),
             }
         )
     return citations
+
+
+def _source_display_name(source: Any) -> str:
+    source_text = str(source or "").strip()
+    if not source_text:
+        return "Unknown source"
+    return os.path.basename(source_text)
+
+
+def _normalize_source_match_text(text: str) -> str:
+    normalized = text.lower()
+    normalized = re.sub(r"\.[a-z0-9]+$", "", normalized)
+    normalized = re.sub(r"[-_]+", " ", normalized)
+    normalized = re.sub(r"[^a-z0-9]+", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return normalized
+
+
+def _query_mentions_document(query: str, doc: Any) -> bool:
+    normalized_query = _normalize_source_match_text(query)
+    if not normalized_query:
+        return False
+
+    terms: list[str] = []
+    source_name = _normalize_source_match_text(_source_display_name(doc.metadata.get("source")))
+    if source_name:
+        terms.append(source_name)
+
+    title = _normalize_source_match_text(str(doc.metadata.get("title") or ""))
+    if title and title not in terms:
+        terms.append(title)
+
+    return any(term and len(term) >= 4 and term in normalized_query for term in terms)
+
+
+def _document_query_terms(doc: Any) -> list[str]:
+    terms: list[str] = []
+    for candidate in (
+        _normalize_source_match_text(_source_display_name(doc.metadata.get("source"))),
+        _normalize_source_match_text(str(doc.metadata.get("title") or "")),
+    ):
+        if not candidate:
+            continue
+        if candidate not in terms:
+            terms.append(candidate)
+        without_trailing_numbers = re.sub(r"(?:\s+\d+)+$", "", candidate).strip()
+        if without_trailing_numbers and without_trailing_numbers not in terms:
+            terms.append(without_trailing_numbers)
+    return terms
+
+
+def _strip_document_reference_from_query(query: str, doc: Any) -> str:
+    stripped = query
+    for term in sorted(_document_query_terms(doc), key=len, reverse=True):
+        tokens = [token for token in term.split() if token]
+        if not tokens:
+            continue
+        pattern = r"\b" + r"[\s\-_]+".join(re.escape(token) for token in tokens) + r"\b"
+        stripped = re.sub(pattern, "", stripped, flags=re.I)
+
+    stripped = re.sub(r"\bfor\s+(?:the\s+)?(?=[?.!,;:]|$)", "", stripped, flags=re.I)
+    stripped = re.sub(r"\s+", " ", stripped)
+    stripped = re.sub(r"\s+([?.!,;:])", r"\1", stripped).strip()
+    return stripped or query
+
+
+def _filter_results_to_source(
+    results: list[tuple[Any, float]],
+    source: str,
+) -> list[tuple[Any, float]]:
+    return [
+        (doc, score)
+        for doc, score in results
+        if str(doc.metadata.get("source") or "") == source
+    ]
+
+
+def _best_result_per_source(results: list[tuple[Any, float]]) -> list[tuple[Any, float]]:
+    best_by_source: dict[str, tuple[Any, float]] = {}
+    for doc, score in results:
+        source = str(doc.metadata.get("source") or "")
+        if not source:
+            continue
+        current = best_by_source.get(source)
+        if current is None or score < current[1]:
+            best_by_source[source] = (doc, score)
+    return list(best_by_source.values())
+
+
+def _extract_focus_phrase(query: str) -> str | None:
+    cleaned = query.strip().lower()
+    cleaned = re.sub(r"^\s*in\s+the\s+.+?\s+document,\s*", "", cleaned)
+    cleaned = cleaned.split("?", 1)[0]
+    cleaned = re.sub(r"\b(?:quote|answer|respond)\b.+$", "", cleaned).strip()
+
+    patterns = [
+        r"^what is the (.+)$",
+        r"^what is (.+)$",
+        r"^what are the (.+)$",
+        r"^how many (.+)$",
+        r"^what does .+? say about (.+)$",
+        r"^is there (?:any |a |an )?(.+)$",
+    ]
+    for pattern in patterns:
+        match = re.match(pattern, cleaned)
+        if match:
+            phrase = match.group(1).strip(" .,:;")
+            return phrase or None
+    return None
+
+
+def _rerank_results(query: str, results: list[tuple[Any, float]]) -> list[tuple[Any, float]]:
+    focus_phrase = _extract_focus_phrase(query)
+    wants_exact_value = _wants_exact_answer(query)
+    wants_bounded_answer = _wants_bounded_answer(query)
+    focus_tokens = (
+        _content_tokens(" ".join(_focus_phrase_variants(focus_phrase)))
+        if focus_phrase
+        else _content_tokens(query)
+    )
+
+    reranked: list[tuple[Any, float, float]] = []
+    for doc, score in results:
+        text = (doc.page_content or "").lower()
+        normalized_text = _normalize_for_match(doc.page_content or "")
+        adjusted_score = score
+        has_focus_phrase = bool(focus_phrase and focus_phrase in text)
+        matched_focus_tokens = [token for token in focus_tokens if token in normalized_text]
+        focus_token_coverage = (
+            len(matched_focus_tokens) / len(focus_tokens)
+            if focus_tokens
+            else 0.0
+        )
+        has_focus_tokens = focus_token_coverage >= 0.6
+        has_dollar_amount = bool(re.search(r"\$\s*\d", doc.page_content or ""))
+        has_numeric_value = bool(
+            re.search(r"\$\s*\d[\d,]*(?:\.\d+)?|\b\d[\d,]*(?:\.\d+)?\b", doc.page_content or "")
+        )
+        has_condition_language = bool(
+            re.search(r"\bwithin\b|\bbefore\b|\bafter\b|\bif\b|\bunless\b|\buntil\b|\bthereafter\b|\bfree\b", normalized_text)
+        )
+        field_value_start = _find_field_value_start(doc.page_content or "", focus_phrase)
+        has_field_value = field_value_start is not None
+        has_field_label = any(
+            re.search(
+                r"\b" + r"\s+".join(re.escape(token) for token in variant.split()) + r"\b\s*:",
+                doc.page_content or "",
+                re.I,
+            )
+            for variant in _focus_phrase_variants(focus_phrase)
+        )
+
+        if has_field_value:
+            adjusted_score -= 0.45
+        elif has_field_label:
+            adjusted_score -= 0.25
+        elif has_focus_phrase:
+            adjusted_score -= 0.35
+        elif has_focus_tokens:
+            adjusted_score -= 0.20
+
+        if focus_token_coverage >= 0.8:
+            adjusted_score -= 0.30
+        elif focus_token_coverage >= 0.5:
+            adjusted_score -= 0.15
+
+        if wants_exact_value and has_dollar_amount:
+            adjusted_score -= 0.15
+
+        if wants_exact_value and (has_field_value or has_focus_phrase or has_focus_tokens) and has_dollar_amount:
+            adjusted_score -= 0.20
+
+        if wants_bounded_answer and has_numeric_value and focus_token_coverage >= 0.35:
+            adjusted_score -= 0.35
+
+        if wants_bounded_answer and has_condition_language and focus_token_coverage >= 0.35:
+            adjusted_score -= 0.10
+
+        if wants_bounded_answer and has_numeric_value and has_condition_language and focus_token_coverage >= 0.35:
+            adjusted_score -= 0.20
+
+        reranked.append((doc, score, max(adjusted_score, 0.0)))
+
+    reranked.sort(key=lambda item: item[2])
+    return [(doc, score) for doc, score, _adjusted_score in reranked]
+
+
+def _has_strong_answer_evidence(query: str, text: str) -> bool:
+    focus_phrase = _extract_focus_phrase(query)
+    focus_tokens = (
+        _content_tokens(" ".join(_focus_phrase_variants(focus_phrase)))
+        if focus_phrase
+        else _content_tokens(query)
+    )
+    normalized_text = _normalize_for_match(text)
+    matched_focus_tokens = [token for token in focus_tokens if token in normalized_text]
+    focus_token_coverage = (
+        len(matched_focus_tokens) / len(focus_tokens)
+        if focus_tokens
+        else 0.0
+    )
+
+    has_field_value = _find_field_value_start(text, focus_phrase) is not None
+    has_numeric_value = bool(
+        re.search(r"\$\s*\d[\d,]*(?:\.\d+)?|\b\d[\d,]*(?:\.\d+)?\b", text)
+    )
+    has_condition_language = bool(
+        re.search(r"\bwithin\b|\bbefore\b|\bafter\b|\bif\b|\bunless\b|\buntil\b|\bthereafter\b|\bfree\b", normalized_text)
+    )
+
+    if _wants_bounded_answer(query):
+        return has_field_value and has_numeric_value
+
+    if has_field_value:
+        return True
+
+    return False
 
 
 # =====================================================
@@ -544,9 +928,44 @@ def query_docs(payload: QueryRequest, request: Request):
 
     # ---------------- retrieval ----------------
     raw_results, status = retrieve(
-        rewritten_query, k=6, tenant_id=tenant_id, return_status=True
+        rewritten_query, k=15, tenant_id=tenant_id, return_status=True
     )
-    results = dedupe_results(raw_results)
+    raw_distance_results = dedupe_results(raw_results)
+    selection_query = original_query
+    explicit_source_docs = {
+        str(doc.metadata.get("source") or ""): doc
+        for doc, _score in raw_distance_results
+        if _query_mentions_document(original_query, doc)
+    }
+    if len(explicit_source_docs) == 1:
+        selected_source, selected_doc = next(iter(explicit_source_docs.items()))
+        raw_distance_results = _filter_results_to_source(raw_distance_results, selected_source)
+        selection_query = _strip_document_reference_from_query(original_query, selected_doc)
+    results = _rerank_results(selection_query, raw_distance_results)
+    in_distance_keys = {
+        (
+            doc.page_content.strip(),
+            doc.metadata.get("source"),
+            doc.metadata.get("page"),
+        )
+        for doc, score in raw_distance_results
+        if score <= MAX_DISTANCE
+    }
+    in_distance_results = [
+        (doc, score)
+        for doc, score in results
+        if (
+            doc.page_content.strip(),
+            doc.metadata.get("source"),
+            doc.metadata.get("page"),
+        ) in in_distance_keys
+    ]
+    strong_evidence_results = [
+        (doc, score)
+        for doc, score in in_distance_results
+        if _has_strong_answer_evidence(selection_query, doc.page_content or "")
+    ]
+    evidence_results = (strong_evidence_results or in_distance_results or results)[:3]
 
     if status == "no_documents_ingested":
         return persist_and_return(
@@ -562,7 +981,7 @@ def query_docs(payload: QueryRequest, request: Request):
             )
         )
 
-    if not results:
+    if not evidence_results:
         return persist_and_return(
             wrap_response(
                 tenant_id=tenant_id,
@@ -582,14 +1001,48 @@ def query_docs(payload: QueryRequest, request: Request):
             )
         )
 
-    best_score = min(score for _, score in results)
-    citations = build_citations(results)
+    best_score = min(score for _, score in raw_distance_results)
+    citations = build_citations(evidence_results, original_query)
+    has_strong_evidence = bool(strong_evidence_results)
+    plausible_source_results = _best_result_per_source(strong_evidence_results or in_distance_results)
+
+    if len(plausible_source_results) >= 2:
+        ambiguity_citations = build_citations(plausible_source_results[:3], original_query)
+        matched_documents = [
+            _source_display_name(doc.metadata.get("source"))
+            for doc, _score in plausible_source_results
+        ]
+        return persist_and_return(
+            wrap_response(
+                tenant_id=tenant_id,
+                conversation_id=conversation_id,
+                query=original_query,
+                mode="guided_fallback",
+                answer="I found this information in multiple documents. Choose a document or ask me to compare them.",
+                citations=ambiguity_citations,
+                artifacts={
+                    "reason": "multiple_documents_match",
+                    "matched_documents": matched_documents,
+                },
+                debug={
+                    "rewritten_query": rewritten_query,
+                    "best_score": best_score,
+                    "max_distance": MAX_DISTANCE,
+                    "matched_documents": matched_documents,
+                    "results_count": len(plausible_source_results),
+                }
+                if payload.debug
+                else None,
+            )
+        )
 
     # ---------------- fallback logic ----------------
     # IMPORTANT CHANGE:
     # - If we HAVE chunks, we should NOT return blank answer.
     # - We will still show citations + chunk evidence.
-    if is_explanatory_query(original_query) or best_score > MAX_DISTANCE:
+    if is_explanatory_query(original_query) or (
+        best_score > MAX_DISTANCE and not has_strong_evidence
+    ):
         return persist_and_return(
             wrap_response(
                 tenant_id=tenant_id,
@@ -606,7 +1059,7 @@ def query_docs(payload: QueryRequest, request: Request):
                     "rewritten_query": rewritten_query,
                     "best_score": best_score,
                     "max_distance": MAX_DISTANCE,
-                    "results_count": len(results),
+                    "results_count": len(evidence_results),
                 }
                 if payload.debug
                 else None,
@@ -620,10 +1073,10 @@ def query_docs(payload: QueryRequest, request: Request):
             "source": doc.metadata.get("source"),
             "page": doc.metadata.get("page"),
         }
-        for doc, _score in results
+        for doc, _score in evidence_results
     ]
 
-    answer = generate_answer(rewritten_query, contexts)
+    answer = generate_answer(original_query, contexts)
 
     return persist_and_return(
         wrap_response(
@@ -638,7 +1091,7 @@ def query_docs(payload: QueryRequest, request: Request):
                 "rewritten_query": rewritten_query,
                 "best_score": best_score,
                 "max_distance": MAX_DISTANCE,
-                "results_count": len(results),
+                "results_count": len(evidence_results),
             }
             if payload.debug
             else None,
