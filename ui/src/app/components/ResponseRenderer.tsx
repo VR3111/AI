@@ -1,9 +1,12 @@
-import { QueryResponse } from "../types/api";
+import { MatchedDocumentOption, QueryResponse, QuerySubmitOptions } from "../types/api";
 import { Tooltip } from "./Tooltip";
 import { useMemo, useState } from "react";
 
 interface ResponseRendererProps {
   response: QueryResponse;
+  submittedQuery?: string;
+  onSubmitQuery?: (query: string, options?: QuerySubmitOptions) => Promise<void>;
+  isProcessing?: boolean;
 }
 
 function getFilenameFromSource(source?: string) {
@@ -12,11 +15,60 @@ function getFilenameFromSource(source?: string) {
   return parts[parts.length - 1] || source;
 }
 
-export function ResponseRenderer({ response }: ResponseRendererProps) {
+function getReadableDocumentName(documentName: string) {
+  const filename = getFilenameFromSource(documentName).replace(/\.[a-z0-9]+$/i, "");
+  const normalized = filename
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const noiseTokens = new Set(["final", "draft", "copy", "signed"]);
+  const words = normalized.split(" ").filter(Boolean);
+
+  while (words.length > 1) {
+    const lastWord = words[words.length - 1];
+    if (
+      /^\d{4}$/.test(lastWord) ||
+      /^v\d+$/i.test(lastWord) ||
+      noiseTokens.has(lastWord.toLowerCase())
+    ) {
+      words.pop();
+      continue;
+    }
+    break;
+  }
+
+  return words
+    .map((word) => {
+      if (/^[A-Z0-9]{2,5}$/.test(word)) return word;
+      return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+    })
+    .join(" ");
+}
+
+export function ResponseRenderer({
+  response,
+  submittedQuery,
+  onSubmitQuery,
+  isProcessing = false,
+}: ResponseRendererProps) {
   const [hoveredAnswer, setHoveredAnswer] = useState(false);
   const [citationsOpen, setCitationsOpen] = useState(false);
 
   const hasCitations = !!response.citations && response.citations.length > 0;
+  const matchedDocuments: MatchedDocumentOption[] =
+    response.artifacts?.matched_document_options?.map((option) => ({
+      source: option.source,
+      display_name: getReadableDocumentName(option.display_name || option.source),
+    })) ??
+    (response.artifacts?.matched_documents ?? []).map((documentName) => ({
+      source: "",
+      display_name: getReadableDocumentName(documentName),
+    }));
+  const showsMatchedDocuments =
+    response.mode === "guided_fallback" &&
+    response.artifacts?.reason === "multiple_documents_match" &&
+    matchedDocuments.length > 0;
 
   const accent = useMemo(() => {
     if (response.mode === "direct_answer") return "emerald";
@@ -26,6 +78,11 @@ export function ResponseRenderer({ response }: ResponseRendererProps) {
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
+  };
+
+  const handleMatchedDocumentClick = async (document: MatchedDocumentOption) => {
+    if (!submittedQuery || !onSubmitQuery || !document.source || isProcessing) return;
+    await onSubmitQuery(submittedQuery, { selectedSource: document.source });
   };
 
   const renderCitations = () => {
@@ -300,6 +357,37 @@ export function ResponseRenderer({ response }: ResponseRendererProps) {
                 </div>
               )}
             </div>
+
+            {showsMatchedDocuments && (
+              <div className="mt-4 lg:mt-5 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3.5 sm:p-4 lg:p-4">
+                <div className="mb-2.5 sm:mb-3">
+                  <div className="text-[10px] lg:text-xs text-amber-400 uppercase tracking-wider mb-1.5">
+                    Multiple Matches
+                  </div>
+                  <p className="text-sm lg:text-base text-foreground leading-relaxed sm:leading-relaxed">
+                    I found multiple matching documents. Choose one to continue, or compare them.
+                  </p>
+                </div>
+                <div className="mt-3 grid gap-2.5 sm:gap-2">
+                  {matchedDocuments.map((document) => (
+                    <button
+                      key={document.source || document.display_name}
+                      type="button"
+                      onClick={() => handleMatchedDocumentClick(document)}
+                      disabled={!submittedQuery || !onSubmitQuery || !document.source || isProcessing}
+                      className="w-full min-h-14 flex flex-col items-start gap-2 rounded-xl border border-border/50 bg-card/60 px-3.5 py-3.5 text-left transition-colors hover:border-amber-500/30 hover:bg-amber-500/10 disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-0 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-3 sm:py-3"
+                    >
+                      <span className="w-full min-w-0 truncate text-sm lg:text-base text-foreground/90 sm:flex-1 sm:pr-3">
+                        {document.display_name}
+                      </span>
+                      <span className="inline-flex items-center rounded-md border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-[10px] lg:text-xs text-amber-400 tracking-wide self-start sm:self-auto whitespace-nowrap">
+                        Ask in this doc
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {renderCitations()}
           </div>

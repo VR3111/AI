@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { QueryResponse } from '../types/api';
+import { QueryResponse, QuerySubmitOptions } from '../types/api';
 import { ResponseRenderer } from './ResponseRenderer';
 
 interface QueryInterfaceProps {
-  onSubmitQuery: (query: string) => Promise<void>;
+  onSubmitQuery: (query: string, options?: QuerySubmitOptions) => Promise<void>;
   currentResponse: QueryResponse | null;
   isProcessing: boolean;
   submittedQuery?: string;
@@ -76,7 +76,12 @@ export function QueryInterface({
             {/* System Response */}
             <div>
               <div className="text-xs text-muted-foreground mb-2 lg:mb-3 uppercase tracking-wider">System Response</div>
-              <ResponseRenderer response={currentResponse} />
+              <ResponseRenderer
+                response={currentResponse}
+                submittedQuery={submittedQuery}
+                onSubmitQuery={onSubmitQuery}
+                isProcessing={isProcessing}
+              />
             </div>
           </div>
         ) : (

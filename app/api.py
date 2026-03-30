@@ -361,6 +361,7 @@ class QueryRequest(BaseModel):
     query: str
     conversation_id: str
     tenant_id: Optional[str] = None
+    selected_source: Optional[str] = None
     debug: bool = False
 
 
@@ -549,6 +550,7 @@ def _focus_phrase_variants(focus_phrase: str | None) -> list[str]:
     base = focus_phrase.strip().lower()
     for candidate in (
         base,
+        re.sub(r"\bannual fee\b", "annual membership fee", base).strip(),
         re.sub(r"\bfees?\b$", "", base).strip(),
         re.sub(r"\b(?:within|before|after|when|if)\b.+$", "", base).strip(),
         re.split(r"\b(?:is|are|was|were|can|could|should)\b", base, 1)[0].strip(),
@@ -587,10 +589,68 @@ def _find_field_value_start(text: str, focus_phrase: str | None) -> int | None:
             if not value:
                 continue
 
-            if re.match(r"(this fee|the fee|please refer)\b", value, re.I):
+            match_prefix = text[max(match.start() - 30, 0):match.start()]
+            if re.search(r"\badditional\s+cards?\b|\badditional\s+card\b", match_prefix, re.I):
+                continue
+
+            if _is_referral_value(value):
                 continue
 
             return match.start()
+
+    return None
+
+
+def _is_referral_value(value: str) -> bool:
+    normalized = re.sub(r"\s+", " ", value).strip().lower()
+    compact = re.sub(r"[^a-z]+", "", normalized)
+
+    if "rates and fees table" in normalized or "ratesandfeestable" in compact:
+        return True
+
+    if (
+        compact.startswith(("thisfee", "thefee", "pleaserefer", "seepage", "seepart"))
+        and any(token in normalized for token in ("page", "part", "table", "schedule"))
+    ):
+        return True
+
+    return False
+
+
+def _extract_field_value(text: str, focus_phrase: str | None) -> str | None:
+    for variant in _focus_phrase_variants(focus_phrase):
+        patterns = [
+            re.compile(
+                r"\b"
+                + r"\s+".join(re.escape(token) for token in variant.split())
+                + r"\b\s*:\s*([^\n]{1,120})",
+                re.I,
+            ),
+            re.compile(
+                r"\b"
+                + r"\s+".join(re.escape(token) for token in variant.split())
+                + r"\b\s+((?:up to\s+)?\$\s*\d[\d,]*(?:\.\d+)?|none\b|no\s+ne\b)",
+                re.I,
+            ),
+        ]
+
+        for pattern in patterns:
+            match = pattern.search(text)
+            if not match:
+                continue
+
+            value = match.group(1).strip()
+            if not value:
+                continue
+
+            match_prefix = text[max(match.start() - 30, 0):match.start()]
+            if re.search(r"\badditional\s+cards?\b|\badditional\s+card\b", match_prefix, re.I):
+                continue
+
+            if _is_referral_value(value):
+                continue
+
+            return "None" if re.fullmatch(r"no\s+ne|none", value, re.I) else value
 
     return None
 
@@ -872,6 +932,7 @@ def query_docs(payload: QueryRequest, request: Request):
     original_query = payload.query
     tenant_id = request.state.tenant_id
     conversation_id = payload.conversation_id
+    selected_source = str(payload.selected_source or "").strip()
 
     # ---------------- reset ----------------
     if is_reset_query(original_query):
@@ -932,16 +993,29 @@ def query_docs(payload: QueryRequest, request: Request):
     )
     raw_distance_results = dedupe_results(raw_results)
     selection_query = original_query
-    explicit_source_docs = {
-        str(doc.metadata.get("source") or ""): doc
-        for doc, _score in raw_distance_results
-        if _query_mentions_document(original_query, doc)
-    }
-    if len(explicit_source_docs) == 1:
-        selected_source, selected_doc = next(iter(explicit_source_docs.items()))
+    if selected_source:
         raw_distance_results = _filter_results_to_source(raw_distance_results, selected_source)
-        selection_query = _strip_document_reference_from_query(original_query, selected_doc)
+    else:
+        explicit_source_docs = {
+            str(doc.metadata.get("source") or ""): doc
+            for doc, _score in raw_distance_results
+            if _query_mentions_document(original_query, doc)
+        }
+        if len(explicit_source_docs) == 1:
+            selected_source, selected_doc = next(iter(explicit_source_docs.items()))
+            raw_distance_results = _filter_results_to_source(raw_distance_results, selected_source)
+            selection_query = _strip_document_reference_from_query(original_query, selected_doc)
     results = _rerank_results(selection_query, raw_distance_results)
+    selected_field_value = None
+    selected_field_result = None
+    if selected_source and _wants_bounded_answer(selection_query):
+        focus_phrase = _extract_focus_phrase(selection_query)
+        for doc, score in results:
+            field_value = _extract_field_value(doc.page_content or "", focus_phrase)
+            if field_value:
+                selected_field_value = field_value
+                selected_field_result = (doc, score)
+                break
     in_distance_keys = {
         (
             doc.page_content.strip(),
@@ -965,6 +1039,8 @@ def query_docs(payload: QueryRequest, request: Request):
         for doc, score in in_distance_results
         if _has_strong_answer_evidence(selection_query, doc.page_content or "")
     ]
+    if selected_field_result is not None:
+        strong_evidence_results = [selected_field_result]
     evidence_results = (strong_evidence_results or in_distance_results or results)[:3]
 
     if status == "no_documents_ingested":
@@ -1008,9 +1084,16 @@ def query_docs(payload: QueryRequest, request: Request):
 
     if len(plausible_source_results) >= 2:
         ambiguity_citations = build_citations(plausible_source_results[:3], original_query)
-        matched_documents = [
-            _source_display_name(doc.metadata.get("source"))
+        matched_document_options = [
+            {
+                "source": str(doc.metadata.get("source") or ""),
+                "display_name": _source_display_name(doc.metadata.get("source")),
+            }
             for doc, _score in plausible_source_results
+        ]
+        matched_documents = [
+            option["display_name"]
+            for option in matched_document_options
         ]
         return persist_and_return(
             wrap_response(
@@ -1023,12 +1106,14 @@ def query_docs(payload: QueryRequest, request: Request):
                 artifacts={
                     "reason": "multiple_documents_match",
                     "matched_documents": matched_documents,
+                    "matched_document_options": matched_document_options,
                 },
                 debug={
                     "rewritten_query": rewritten_query,
                     "best_score": best_score,
                     "max_distance": MAX_DISTANCE,
                     "matched_documents": matched_documents,
+                    "selected_source": selected_source or None,
                     "results_count": len(plausible_source_results),
                 }
                 if payload.debug
@@ -1076,7 +1161,10 @@ def query_docs(payload: QueryRequest, request: Request):
         for doc, _score in evidence_results
     ]
 
-    answer = generate_answer(original_query, contexts)
+    answer = selected_field_value
+
+    if not answer:
+        answer = generate_answer(original_query, contexts)
 
     return persist_and_return(
         wrap_response(

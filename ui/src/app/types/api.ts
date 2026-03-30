@@ -13,6 +13,15 @@ export interface DocumentCitation {
   snippet: string;
 }
 
+export interface MatchedDocumentOption {
+  source: string;
+  display_name: string;
+}
+
+export interface QuerySubmitOptions {
+  selectedSource?: string;
+}
+
 // Backend response from POST /query
 export interface QueryResponse {
   request_id: string;
@@ -27,6 +36,8 @@ export interface QueryResponse {
     reason?: string;
     additional_resources?: any[];
     best_score?: number;
+    matched_documents?: string[];
+    matched_document_options?: MatchedDocumentOption[];
   };
   debug: any | null;
 }

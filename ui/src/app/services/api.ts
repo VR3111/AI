@@ -18,6 +18,7 @@ import {
   IdentitySession,
   GuestUpgradeResponse,
   GuestUpgradeTicketResponse,
+  QuerySubmitOptions,
 } from "../types/api";
 import { decodeJwtPayload } from "../../../lib/authIdentity";
 import { supabase } from "@/lib/supabase";
@@ -374,6 +375,7 @@ export const api = {
   async submitQuery(
     query: string,
     conversationId?: string,
+    options?: QuerySubmitOptions,
   ): Promise<QueryResponse> {
     const convId =
       conversationId || currentConversationId || generateConversationId();
@@ -385,6 +387,7 @@ export const api = {
       body: JSON.stringify({
         query,
         conversation_id: convId,
+        selected_source: options?.selectedSource,
         debug: false,
       }),
     });

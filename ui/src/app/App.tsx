@@ -11,7 +11,7 @@ import { ConfirmDeleteDialog } from "./components/ConfirmDeleteDialog";
 import { ConfirmAccountDeleteDialog } from "./components/ConfirmAccountDeleteDialog";
 import { SupportCenter } from "./components/SupportCenter";
 import { api } from "./services/api";
-import { QueryResponse, Document, Conversation } from "./types/api";
+import { QueryResponse, Document, Conversation, QuerySubmitOptions } from "./types/api";
 import { toast, Toaster } from "sonner";
 
 type View = "query" | "conversation";
@@ -224,13 +224,17 @@ function App() {
     toast.success("Started new conversation");
   };
 
-  const handleSubmitQuery = async (query: string) => {
+  const handleSubmitQuery = async (query: string, options?: QuerySubmitOptions) => {
     console.log("SUBMIT_QUERY_CALLED", query);
     setIsProcessing(true); // safe to do BEFORE await
 
     try {
       console.log("APP_BEFORE_AWAIT_SUBMIT_QUERY");
-      const response = await api.submitQuery(query, selectedConversationId ?? undefined);
+      const response = await api.submitQuery(
+        query,
+        selectedConversationId ?? undefined,
+        options,
+      );
 
       setSubmittedQuery(query);
       setCurrentResponse(response);
