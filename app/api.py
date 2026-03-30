@@ -513,10 +513,41 @@ QUESTION_STOPWORDS = {
 }
 
 
+DOCUMENT_ALIAS_STOPWORDS = {
+    "document",
+    "documents",
+    "doc",
+    "docs",
+    "agreement",
+    "agreements",
+    "file",
+    "files",
+    "pdf",
+    "pricing",
+    "schedule",
+    "rates",
+    "fees",
+    "table",
+    "final",
+    "draft",
+    "copy",
+    "signed",
+    "card",
+    "cards",
+}
+
+
+TRUSTED_BRAND_ALIASES = {
+    "american express": {"amex"},
+    "discover": {"discover"},
+    "prime": {"prime"},
+}
+
+
 def _wants_bounded_answer(query: str) -> bool:
     return bool(
         re.search(
-            r"\bhow many\b|\blimit\b|\bmaximum\b|\bminimum\b|\bfee\b|\bamount\b|\bthreshold\b|\bcount\b|\bwithin\b|\bbefore\b|\bafter\b",
+            r"\bhow many\b|\blimit\b|\bmaximum\b|\bminimum\b|\bfee\b|\bamount\b|\bthreshold\b|\bcount\b|\bbalance\b|\bwithin\b|\bbefore\b|\bafter\b|\bapr\b|\bannual percentage rate\b",
             query,
             re.I,
         )
@@ -551,6 +582,9 @@ def _focus_phrase_variants(focus_phrase: str | None) -> list[str]:
     for candidate in (
         base,
         re.sub(r"\bannual fee\b", "annual membership fee", base).strip(),
+        re.sub(r"\blate payment fee\b", "late fee", base).strip(),
+        re.sub(r"\bapr\b", "annual percentage rate", base).strip(),
+        re.sub(r"\baprs\b", "annual percentage rates", base).strip(),
         re.sub(r"\bfees?\b$", "", base).strip(),
         re.sub(r"\b(?:within|before|after|when|if)\b.+$", "", base).strip(),
         re.split(r"\b(?:is|are|was|were|can|could|should)\b", base, 1)[0].strip(),
@@ -563,24 +597,105 @@ def _focus_phrase_variants(focus_phrase: str | None) -> list[str]:
     return variants
 
 
-def _find_field_value_start(text: str, focus_phrase: str | None) -> int | None:
-    for variant in _focus_phrase_variants(focus_phrase):
-        patterns = [
-            re.compile(
-                r"\b"
-                + r"\s+".join(re.escape(token) for token in variant.split())
-                + r"\b\s*:\s*([^\n]{1,120})",
-                re.I,
-            ),
-            re.compile(
-                r"\b"
-                + r"\s+".join(re.escape(token) for token in variant.split())
-                + r"\b\s+((?:up to\s+)?\$\s*\d[\d,]*(?:\.\d+)?|none\b|no\s+ne\b)",
-                re.I,
-            ),
-        ]
+def _field_value_patterns(variant: str) -> list[re.Pattern[str]]:
+    phrase_pattern = r"\b" + r"\s+".join(re.escape(token) for token in variant.split()) + r"\b"
+    value_pattern = (
+        r"(?:up to\s+)?\$\s*\d[\d,]*(?:\.\d+)?"
+        r"|(?:\d+(?:\.\d+)?\s*%)\s*(?:to|-|–|—)\s*(?:\d+(?:\.\d+)?\s*%)"
+        r"|(?:\d+(?:\.\d+)?\s*%)"
+        r"|none\b|no\s+ne\b"
+    )
+    return [
+        re.compile(phrase_pattern + r"\s*:\s*([^\n]{1,120})", re.I),
+        re.compile(phrase_pattern + r"\s+(" + value_pattern + r")", re.I),
+    ]
 
-        for pattern in patterns:
+
+def _normalize_extracted_field_value(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _extract_field_value_from_line(
+    text: str,
+    focus_phrase: str | None,
+) -> tuple[str, int] | None:
+    value_hint_pattern = re.compile(
+        r"\$\s*\d|\bnone\b|\bno\s+ne\b|\d+(?:\.\d+)?\s*%|\bafter that\b",
+        re.I,
+    )
+
+    for variant in _focus_phrase_variants(focus_phrase):
+        phrase_pattern = re.compile(
+            r"\b" + r"\s+".join(re.escape(token) for token in variant.split()) + r"\b",
+            re.I,
+        )
+
+        for match in phrase_pattern.finditer(text):
+            line_start = text.rfind("\n", 0, match.start()) + 1
+            line_end = text.find("\n", match.end())
+            if line_end < 0:
+                line_end = len(text)
+
+            line = text[line_start:line_end]
+            if not line.strip():
+                continue
+
+            match_offset = match.end() - line_start
+            match_prefix = line[:match.start() - line_start]
+            match_suffix = line[match_offset:].lstrip(" :.-\t")
+            continuation_end = line_end
+            for _ in range(2):
+                if (
+                    not match_suffix
+                    or re.search(r"[.!?]$", match_suffix.strip())
+                    or re.search(
+                        r"(?:\$\s*\d[\d,]*(?:\.\d+)?|\bnone\b|\bno\s+ne\b|\d+(?:\.\d+)?\s*%)\s*$",
+                        match_suffix.strip(),
+                        re.I,
+                    )
+                    or continuation_end >= len(text)
+                ):
+                    break
+
+                next_line_start = continuation_end + 1
+                next_line_end = text.find("\n", next_line_start)
+                if next_line_end < 0:
+                    next_line_end = len(text)
+                next_line = text[next_line_start:next_line_end].strip()
+                if not next_line or re.match(
+                    r"^(?:[A-Z][a-z]+(?: [A-Z][a-z]+){0,3}(?: Fee| APR| APRs| Charge| Charges)|Fees)\b",
+                    next_line,
+                ):
+                    break
+
+                match_suffix = f"{match_suffix} {next_line}"
+                continuation_end = next_line_end
+            value = _normalize_extracted_field_value(match_suffix)
+            if not value:
+                continue
+
+            if re.search(r"\badditional\s+cards?\b|\badditional\s+card\b", match_prefix + " " + value, re.I):
+                continue
+
+            if _is_referral_value(value):
+                continue
+
+            if not value_hint_pattern.search(value):
+                continue
+
+            return value, match.start()
+
+    return None
+
+
+def _find_field_value_start(text: str, focus_phrase: str | None) -> int | None:
+    line_match = _extract_field_value_from_line(text, focus_phrase)
+    if line_match is not None:
+        _value, start = line_match
+        return start
+
+    for variant in _focus_phrase_variants(focus_phrase):
+        for pattern in _field_value_patterns(variant):
             match = pattern.search(text)
             if not match:
                 continue
@@ -588,6 +703,7 @@ def _find_field_value_start(text: str, focus_phrase: str | None) -> int | None:
             value = match.group(1).strip()
             if not value:
                 continue
+            value = _normalize_extracted_field_value(value)
 
             match_prefix = text[max(match.start() - 30, 0):match.start()]
             if re.search(r"\badditional\s+cards?\b|\badditional\s+card\b", match_prefix, re.I):
@@ -618,23 +734,13 @@ def _is_referral_value(value: str) -> bool:
 
 
 def _extract_field_value(text: str, focus_phrase: str | None) -> str | None:
-    for variant in _focus_phrase_variants(focus_phrase):
-        patterns = [
-            re.compile(
-                r"\b"
-                + r"\s+".join(re.escape(token) for token in variant.split())
-                + r"\b\s*:\s*([^\n]{1,120})",
-                re.I,
-            ),
-            re.compile(
-                r"\b"
-                + r"\s+".join(re.escape(token) for token in variant.split())
-                + r"\b\s+((?:up to\s+)?\$\s*\d[\d,]*(?:\.\d+)?|none\b|no\s+ne\b)",
-                re.I,
-            ),
-        ]
+    line_match = _extract_field_value_from_line(text, focus_phrase)
+    if line_match is not None:
+        value, _start = line_match
+        return "None" if re.fullmatch(r"no\s+ne|none", value, re.I) else value
 
-        for pattern in patterns:
+    for variant in _focus_phrase_variants(focus_phrase):
+        for pattern in _field_value_patterns(variant):
             match = pattern.search(text)
             if not match:
                 continue
@@ -642,6 +748,7 @@ def _extract_field_value(text: str, focus_phrase: str | None) -> str | None:
             value = match.group(1).strip()
             if not value:
                 continue
+            value = _normalize_extracted_field_value(value)
 
             match_prefix = text[max(match.start() - 30, 0):match.start()]
             if re.search(r"\badditional\s+cards?\b|\badditional\s+card\b", match_prefix, re.I):
@@ -745,6 +852,8 @@ def _document_query_terms(doc: Any) -> list[str]:
     for candidate in (
         _normalize_source_match_text(_source_display_name(doc.metadata.get("source"))),
         _normalize_source_match_text(str(doc.metadata.get("title") or "")),
+        _normalize_source_match_text(str(doc.metadata.get("subject") or "")),
+        _normalize_source_match_text(str(doc.metadata.get("company") or "")),
     ):
         if not candidate:
             continue
@@ -754,6 +863,224 @@ def _document_query_terms(doc: Any) -> list[str]:
         if without_trailing_numbers and without_trailing_numbers not in terms:
             terms.append(without_trailing_numbers)
     return terms
+
+
+def _unique_source_docs(results: list[tuple[Any, float]]) -> dict[str, Any]:
+    docs_by_source: dict[str, Any] = {}
+    for doc, _score in results:
+        source = str(doc.metadata.get("source") or "")
+        if source and source not in docs_by_source:
+            docs_by_source[source] = doc
+    return docs_by_source
+
+
+def _docs_by_source(results: list[tuple[Any, float]]) -> dict[str, list[Any]]:
+    grouped: dict[str, list[Any]] = {}
+    seen_keys: set[tuple[str, Any, str]] = set()
+    for doc, _score in results:
+        source = str(doc.metadata.get("source") or "")
+        if not source:
+            continue
+        key = (
+            source,
+            doc.metadata.get("page"),
+            (doc.page_content or "").strip(),
+        )
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        grouped.setdefault(source, []).append(doc)
+    return grouped
+
+
+def _document_match_aliases(doc: Any) -> list[str]:
+    aliases: set[str] = set()
+    for term in _document_query_terms(doc):
+        if not term:
+            continue
+
+        aliases.add(term)
+        for brand_phrase, brand_aliases in TRUSTED_BRAND_ALIASES.items():
+            if brand_phrase in term:
+                aliases.update(brand_aliases)
+
+        tokens = [token for token in term.split() if token and not token.isdigit()]
+        meaningful_tokens = [
+            token
+            for token in tokens
+            if len(token) >= 3 and token not in DOCUMENT_ALIAS_STOPWORDS
+        ]
+
+        for token in meaningful_tokens:
+            aliases.add(token)
+
+        for index in range(len(meaningful_tokens) - 1):
+            left = meaningful_tokens[index]
+            right = meaningful_tokens[index + 1]
+            aliases.add(f"{left} {right}")
+            if len(left) >= 2 and len(right) >= 2:
+                aliases.add(f"{left[:2]}{right[:2]}")
+
+        initials = "".join(token[0] for token in meaningful_tokens[:4])
+        if 2 <= len(initials) <= 6:
+            aliases.add(initials)
+
+    return sorted(
+        {alias.strip() for alias in aliases if alias.strip()},
+        key=lambda alias: (-len(alias.replace(" ", "")), alias),
+    )
+
+
+def _trusted_brand_aliases_from_docs(docs: list[Any]) -> set[str]:
+    alias_matches: set[str] = set()
+    if not docs:
+        return alias_matches
+
+    combined_terms = " ".join(
+        term
+        for doc in docs
+        for term in _document_query_terms(doc)
+    )
+    combined_text = " ".join(
+        _normalize_source_match_text(doc.page_content or "")
+        for doc in docs[:8]
+    )
+
+    for brand_phrase, brand_aliases in TRUSTED_BRAND_ALIASES.items():
+        if brand_phrase in combined_terms:
+            alias_matches.update(brand_aliases)
+            continue
+
+        occurrence_count = combined_text.count(brand_phrase)
+        has_context = any(
+            phrase in combined_text
+            for phrase in (
+                f"{brand_phrase} card",
+                f"choosing {brand_phrase}",
+                f"{brand_phrase} bank",
+                f"{brand_phrase} refer",
+                f"{brand_phrase} account",
+                f"{brand_phrase} agreement",
+            )
+        )
+        if occurrence_count >= 2 or (occurrence_count >= 1 and has_context):
+            alias_matches.update(brand_aliases)
+
+    return alias_matches
+
+
+def _source_match_aliases(docs: list[Any]) -> list[str]:
+    aliases: set[str] = set()
+    for doc in docs:
+        aliases.update(_document_match_aliases(doc))
+
+    aliases.update(_trusted_brand_aliases_from_docs(docs))
+
+    return sorted(
+        {alias.strip() for alias in aliases if alias.strip()},
+        key=lambda alias: (-len(alias.replace(" ", "")), alias),
+    )
+
+
+def _alias_match_position(normalized_query: str, alias: str) -> int | None:
+    tokens = [token for token in alias.split() if token]
+    if not tokens:
+        return None
+    pattern = r"\b" + r"\s+".join(re.escape(token) for token in tokens) + r"\b"
+    match = re.search(pattern, normalized_query, re.I)
+    if not match:
+        return None
+    return match.start()
+
+
+def _resolve_compare_sources(
+    query: str,
+    results: list[tuple[Any, float]],
+) -> list[tuple[str, Any]]:
+    normalized_query = _normalize_source_match_text(query)
+    matches: list[tuple[int, int, str, Any]] = []
+    grouped_docs = _docs_by_source(results)
+    first_docs = _unique_source_docs(results)
+
+    for source, docs in grouped_docs.items():
+        doc = first_docs.get(source)
+        if doc is None:
+            continue
+        best_match_score = 0
+        best_match_position: int | None = None
+        for alias in _source_match_aliases(docs):
+            compact_alias = alias.replace(" ", "")
+            if len(compact_alias) < 4:
+                continue
+            match_position = _alias_match_position(normalized_query, alias)
+            if match_position is None:
+                continue
+
+            alias_score = len(compact_alias)
+            if " " in alias:
+                alias_score += 2
+            if alias_score > best_match_score or (
+                alias_score == best_match_score
+                and (best_match_position is None or match_position < best_match_position)
+            ):
+                best_match_score = alias_score
+                best_match_position = match_position
+
+        if best_match_score > 0 and best_match_position is not None:
+            matches.append((best_match_position, -best_match_score, source, doc))
+
+    matches.sort(key=lambda item: (item[0], item[1], _source_display_name(item[2]).lower()))
+    return [(source, doc) for _position, _neg_score, source, doc in matches]
+
+
+def _strip_document_references_from_query(query: str, docs: list[Any]) -> str:
+    stripped = query
+    for doc in docs:
+        for alias in _source_match_aliases([doc]):
+            if len(alias.replace(" ", "")) < 4:
+                continue
+            pattern = r"\b" + r"[\s\-_]+".join(re.escape(token) for token in alias.split()) + r"\b"
+            stripped = re.sub(pattern, "", stripped, flags=re.I)
+
+    stripped = re.sub(r"\s+", " ", stripped)
+    stripped = re.sub(r"\s+([?.!,;:])", r"\1", stripped).strip()
+    return stripped or query
+
+
+def _strip_source_references_from_query(
+    query: str,
+    sources: list[str],
+    results: list[tuple[Any, float]],
+) -> str:
+    stripped = query
+    grouped_docs = _docs_by_source(results)
+    for source in sources:
+        for alias in _source_match_aliases(grouped_docs.get(source, [])):
+            if len(alias.replace(" ", "")) < 4:
+                continue
+            pattern = r"\b" + r"[\s\-_]+".join(re.escape(token) for token in alias.split()) + r"\b"
+            stripped = re.sub(pattern, "", stripped, flags=re.I)
+
+    stripped = re.sub(r"\s+", " ", stripped)
+    stripped = re.sub(r"\s+([?.!,;:])", r"\1", stripped).strip()
+    return stripped or query
+
+
+def _clean_compare_focus_query(query: str) -> str:
+    cleaned = query.strip()
+    cleaned = re.sub(r"^\s*compare\b", "", cleaned, flags=re.I)
+    cleaned = re.sub(r"\b(?:vs|versus)\b", " ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\bbetween\b", " ", cleaned, flags=re.I)
+    cleaned = re.sub(
+        r"\b(?:these|those|the|both|each|two|2)\s+(?:cards?|documents?|docs?|agreements?|files?)\b",
+        " ",
+        cleaned,
+        flags=re.I,
+    )
+    cleaned = re.sub(r"\band\b", " ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\b(?:for|of|and|between)\b(?=\s*(?:[?.!,;:]|$))", "", cleaned, flags=re.I)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned.strip(" .,:;?")
 
 
 def _strip_document_reference_from_query(query: str, doc: Any) -> str:
@@ -794,6 +1121,20 @@ def _best_result_per_source(results: list[tuple[Any, float]]) -> list[tuple[Any,
     return list(best_by_source.values())
 
 
+def _is_explicit_compare_query(query: str) -> bool:
+    return bool(
+        re.search(r"\bcompare\b|\bcomparison\b|\bvs\.?\b|\bversus\b", query, re.I)
+        or (
+            re.search(r"\b(?:both|each)\b", query, re.I)
+            and re.search(r"\b(?:cards?|documents?|docs?|agreements?|files?)\b", query, re.I)
+        )
+        or (
+            re.search(r"\bbetween\b", query, re.I)
+            and re.search(r"\b(?:two|2|both|these|those)\b", query, re.I)
+        )
+    )
+
+
 def _extract_focus_phrase(query: str) -> str | None:
     cleaned = query.strip().lower()
     cleaned = re.sub(r"^\s*in\s+the\s+.+?\s+document,\s*", "", cleaned)
@@ -805,6 +1146,7 @@ def _extract_focus_phrase(query: str) -> str | None:
         r"^what is (.+)$",
         r"^what are the (.+)$",
         r"^how many (.+)$",
+        r"^compare (.+)$",
         r"^what does .+? say about (.+)$",
         r"^is there (?:any |a |an )?(.+)$",
     ]
@@ -924,6 +1266,58 @@ def _has_strong_answer_evidence(query: str, text: str) -> bool:
     return False
 
 
+def _build_compare_answer(compare_results: list[dict[str, Any]]) -> str:
+    lines: list[str] = []
+    for item in compare_results:
+        value = item["value"] if item.get("found") else "Not explicitly found"
+        lines.append(f"{item['display_name']} -> {value}")
+    return "\n".join(lines)
+
+
+def _compare_result_for_source(
+    *,
+    tenant_id: str,
+    source: str,
+    compare_query: str,
+) -> tuple[dict[str, Any], list[tuple[Any, float]]]:
+    raw_results, _status = retrieve(
+        compare_query,
+        k=8,
+        tenant_id=tenant_id,
+        return_status=True,
+        source_filter=source,
+    )
+    results = _rerank_results(compare_query, dedupe_results(raw_results))
+    focus_phrase = _extract_focus_phrase(compare_query) or compare_query.strip().lower() or None
+
+    field_value = None
+    field_result = None
+    for doc, score in results:
+        extracted = _extract_field_value(doc.page_content or "", focus_phrase)
+        if extracted:
+            field_value = extracted
+            field_result = (doc, score)
+            break
+
+    in_distance_results = [(doc, score) for doc, score in results if score <= MAX_DISTANCE]
+    strong_evidence_results = [
+        (doc, score)
+        for doc, score in in_distance_results
+        if _has_strong_answer_evidence(compare_query, doc.page_content or "")
+    ]
+    evidence_results = ([field_result] if field_result else strong_evidence_results or in_distance_results or results)[:1]
+
+    return (
+        {
+            "source": source,
+            "display_name": _source_display_name(source),
+            "value": field_value,
+            "found": bool(field_value),
+        },
+        evidence_results,
+    )
+
+
 # =====================================================
 # Main Query Endpoint
 # =====================================================
@@ -933,6 +1327,7 @@ def query_docs(payload: QueryRequest, request: Request):
     tenant_id = request.state.tenant_id
     conversation_id = payload.conversation_id
     selected_source = str(payload.selected_source or "").strip()
+    explicit_compare_query = _is_explicit_compare_query(original_query)
 
     # ---------------- reset ----------------
     if is_reset_query(original_query):
@@ -973,7 +1368,7 @@ def query_docs(payload: QueryRequest, request: Request):
             )
         )
 
-    if mentions_external_entity(original_query):
+    if mentions_external_entity(original_query) and not explicit_compare_query:
         return persist_and_return(
             wrap_response(
                 tenant_id=tenant_id,
@@ -992,6 +1387,97 @@ def query_docs(payload: QueryRequest, request: Request):
         rewritten_query, k=15, tenant_id=tenant_id, return_status=True
     )
     raw_distance_results = dedupe_results(raw_results)
+
+    if explicit_compare_query:
+        if status == "no_documents_ingested":
+            return persist_and_return(
+                wrap_response(
+                    tenant_id=tenant_id,
+                    conversation_id=conversation_id,
+                    query=original_query,
+                    mode="hard_refusal",
+                    answer="There are no documents available yet to answer this question.",
+                    citations=[],
+                    artifacts={"reason": "no_documents_ingested"},
+                    debug={"status": status} if payload.debug else None,
+                )
+            )
+
+        compare_sources = _resolve_compare_sources(original_query, raw_distance_results)
+        compare_focus_query = _clean_compare_focus_query(
+            _strip_source_references_from_query(
+                original_query,
+                [source for source, _doc in compare_sources],
+                raw_distance_results,
+            )
+        )
+        compare_focus_phrase = _extract_focus_phrase(compare_focus_query) or compare_focus_query
+
+        if len(compare_sources) != 2 or not compare_focus_phrase:
+            ambiguity_citations = build_citations(
+                _best_result_per_source(raw_distance_results)[:3],
+                original_query,
+            )
+            return persist_and_return(
+                wrap_response(
+                    tenant_id=tenant_id,
+                    conversation_id=conversation_id,
+                    query=original_query,
+                    mode="guided_fallback",
+                    answer="I can compare one field across two documents, but I need the two document names spelled out explicitly. Tell me which two documents to compare.",
+                    citations=ambiguity_citations,
+                    artifacts={"reason": "compare_documents_needed"},
+                    debug={
+                        "rewritten_query": rewritten_query,
+                        "compare_focus_query": compare_focus_query,
+                        "resolved_compare_sources": [
+                            _source_display_name(source)
+                            for source, _doc in compare_sources
+                        ],
+                    }
+                    if payload.debug
+                    else None,
+                )
+            )
+
+        compare_results: list[dict[str, Any]] = []
+        compare_citations: list[dict[str, Any]] = []
+        for source, _doc in compare_sources:
+            compare_result, evidence_results = _compare_result_for_source(
+                tenant_id=tenant_id,
+                source=source,
+                compare_query=compare_focus_query,
+            )
+            compare_results.append(compare_result)
+            compare_citations.extend(build_citations(evidence_results, compare_focus_query))
+
+        return persist_and_return(
+            wrap_response(
+                tenant_id=tenant_id,
+                conversation_id=conversation_id,
+                query=original_query,
+                mode="direct_answer",
+                answer=_build_compare_answer(compare_results),
+                citations=compare_citations,
+                artifacts={
+                    "reason": "compare_result",
+                    "compare_field": compare_focus_phrase,
+                    "compare_results": compare_results,
+                },
+                debug={
+                    "rewritten_query": rewritten_query,
+                    "compare_focus_query": compare_focus_query,
+                    "selected_source_ignored": bool(selected_source),
+                    "resolved_compare_sources": [
+                        _source_display_name(source)
+                        for source, _doc in compare_sources
+                    ],
+                }
+                if payload.debug
+                else None,
+            )
+        )
+
     selection_query = original_query
     if selected_source:
         raw_distance_results = _filter_results_to_source(raw_distance_results, selected_source)

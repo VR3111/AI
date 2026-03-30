@@ -18,6 +18,13 @@ export interface MatchedDocumentOption {
   display_name: string;
 }
 
+export interface CompareResultItem {
+  source: string;
+  display_name: string;
+  value: string | null;
+  found: boolean;
+}
+
 export interface QuerySubmitOptions {
   selectedSource?: string;
   selectedSourceLabel?: string;
@@ -38,6 +45,8 @@ export interface QueryResponse {
     reason?: string;
     additional_resources?: any[];
     best_score?: number;
+    compare_field?: string;
+    compare_results?: CompareResultItem[];
     matched_documents?: string[];
     matched_document_options?: MatchedDocumentOption[];
   };

@@ -1,4 +1,9 @@
-import { MatchedDocumentOption, QueryResponse, QuerySubmitOptions } from "../types/api";
+import {
+  CompareResultItem,
+  MatchedDocumentOption,
+  QueryResponse,
+  QuerySubmitOptions,
+} from "../types/api";
 import { Tooltip } from "./Tooltip";
 import { useMemo, useState } from "react";
 
@@ -28,7 +33,7 @@ function getReadableDocumentName(documentName: string) {
   while (words.length > 1) {
     const lastWord = words[words.length - 1];
     if (
-      /^\d{4}$/.test(lastWord) ||
+      /^\d{1,8}$/.test(lastWord) ||
       /^v\d+$/i.test(lastWord) ||
       noiseTokens.has(lastWord.toLowerCase())
     ) {
@@ -43,7 +48,21 @@ function getReadableDocumentName(documentName: string) {
       if (/^[A-Z0-9]{2,5}$/.test(word)) return word;
       return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
     })
-    .join(" ");
+    .join(" ")
+    .trim();
+}
+
+function getCompareDocumentTitle(item: CompareResultItem) {
+  return getReadableDocumentName(item.display_name || item.source);
+}
+
+function getCompareValue(item: CompareResultItem) {
+  return item.found ? item.value || "" : "Not explicitly found";
+}
+
+function isCompactCompareValue(value: string) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length > 0 && normalized.length <= 24 && !normalized.includes("\n");
 }
 
 export function ResponseRenderer({
@@ -52,10 +71,14 @@ export function ResponseRenderer({
   onSubmitQuery,
   isProcessing = false,
 }: ResponseRendererProps) {
-  const [hoveredAnswer, setHoveredAnswer] = useState(false);
   const [citationsOpen, setCitationsOpen] = useState(false);
 
   const hasCitations = !!response.citations && response.citations.length > 0;
+  const compareResults: CompareResultItem[] = response.artifacts?.compare_results ?? [];
+  const isCompareResult =
+    response.mode === "direct_answer" &&
+    response.artifacts?.reason === "compare_result" &&
+    compareResults.length > 0;
   const matchedDocuments: MatchedDocumentOption[] =
     response.artifacts?.matched_document_options?.map((option) => ({
       source: option.source,
@@ -78,6 +101,25 @@ export function ResponseRenderer({
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
+  };
+
+  const getCopyButtonClass = (tone: "emerald" | "amber" | "zinc") => {
+    const toneClasses =
+      tone === "emerald"
+        ? "hover:border-emerald-500/50 hover:bg-emerald-500/10"
+        : tone === "amber"
+        ? "hover:border-amber-500/50 hover:bg-amber-500/10"
+        : "hover:border-zinc-500/50 hover:bg-zinc-500/10";
+
+    return `inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-border/50 bg-card/80 backdrop-blur-sm opacity-100 transition-all duration-150 lg:opacity-0 lg:group-hover:opacity-100 ${toneClasses}`;
+  };
+
+  const getCopyIconClass = (tone: "emerald" | "amber" | "zinc") => {
+    return tone === "emerald"
+      ? "w-3.5 h-3.5 text-muted-foreground hover:text-emerald-400"
+      : tone === "amber"
+      ? "w-3.5 h-3.5 text-muted-foreground hover:text-amber-400"
+      : "w-3.5 h-3.5 text-muted-foreground hover:text-zinc-300";
   };
 
   const handleMatchedDocumentClick = async (document: MatchedDocumentOption) => {
@@ -207,15 +249,79 @@ export function ResponseRenderer({
     );
   };
 
+  const renderCompareResults = () => {
+    if (!isCompareResult) return null;
+
+    return (
+      <div className="mb-2.5 lg:mb-3.5">
+        {response.artifacts?.compare_field && (
+          <div className="mb-2.5 text-[10px] lg:text-xs uppercase tracking-[0.18em] text-emerald-400/90">
+            Comparing {response.artifacts.compare_field}
+          </div>
+        )}
+
+        <div className="grid gap-2.5 lg:gap-3">
+          {compareResults.map((item) => {
+            const title = getCompareDocumentTitle(item);
+            const value = getCompareValue(item);
+            const compactValue = isCompactCompareValue(value);
+
+            return (
+              <div
+                key={item.source || item.display_name}
+                className="overflow-hidden rounded-xl lg:rounded-2xl border border-emerald-500/20 bg-gradient-to-br from-emerald-500/10 via-emerald-500/[0.07] to-transparent"
+              >
+                <div className="flex items-start justify-between gap-2.5 border-b border-emerald-500/10 px-3 py-2.5 sm:px-3.5 lg:px-4 lg:py-3">
+                  <div className="min-w-0">
+                    <div className="text-[10px] lg:text-xs uppercase tracking-[0.18em] text-emerald-400/80">
+                      Document
+                    </div>
+                    <div className="mt-1 text-sm lg:text-base font-medium leading-snug text-foreground">
+                      {title}
+                    </div>
+                  </div>
+                  <span
+                    className={`inline-flex shrink-0 items-center rounded-full border px-2 py-1 text-[10px] lg:text-xs tracking-wide ${
+                      item.found
+                        ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-300"
+                        : "border-zinc-500/20 bg-zinc-500/10 text-zinc-300"
+                    }`}
+                  >
+                    {item.found ? "Found" : "Not Found"}
+                  </span>
+                </div>
+
+                <div className="px-3 py-3 sm:px-3.5 sm:py-3.5 lg:px-4 lg:py-4">
+                  <div className="text-[10px] lg:text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                    Value
+                  </div>
+                  <div className="mt-2">
+                    {compactValue ? (
+                      <div className="inline-flex max-w-full items-center rounded-xl border border-emerald-500/20 bg-background/70 px-2.5 py-1.5 text-sm lg:text-base font-medium text-foreground shadow-sm">
+                        <span className="break-words">{value}</span>
+                      </div>
+                    ) : (
+                      <div className="rounded-xl border border-border/40 bg-background/60 px-3 py-2.5 text-sm lg:text-base leading-relaxed text-foreground whitespace-pre-wrap break-words">
+                        {value}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
   // -----------------------------
   // DIRECT ANSWER
   // -----------------------------
   if (response.mode === "direct_answer") {
     return (
       <div
-        className="relative bg-gradient-to-br from-emerald-500/10 via-emerald-500/5 to-transparent rounded-lg lg:rounded-2xl p-4 lg:p-6 border border-emerald-500/20 shadow-lg backdrop-blur-sm group"
-        onMouseEnter={() => setHoveredAnswer(true)}
-        onMouseLeave={() => setHoveredAnswer(false)}
+        className="relative bg-gradient-to-br from-emerald-500/10 via-emerald-500/5 to-transparent rounded-lg lg:rounded-2xl p-3.5 sm:p-4 lg:p-6 border border-emerald-500/20 shadow-lg backdrop-blur-sm group"
       >
         <div className="absolute inset-0 bg-gradient-to-b from-white/[0.03] to-transparent rounded-lg lg:rounded-2xl pointer-events-none" />
 
@@ -241,7 +347,7 @@ export function ResponseRenderer({
           </div>
 
           <div className="flex-1 min-w-0">
-            <div className="mb-2 lg:mb-3">
+            <div className="mb-2.5 lg:mb-3 flex items-start justify-between gap-3">
               <span className="inline-flex items-center gap-1.5 px-2 lg:px-3 py-0.5 lg:py-1 bg-emerald-500/20 text-emerald-400 rounded-lg backdrop-blur-sm border border-emerald-500/30 text-[10px] lg:text-xs">
                 <svg
                   className="w-2 h-2 lg:w-3 lg:h-3"
@@ -250,33 +356,39 @@ export function ResponseRenderer({
                 >
                   <circle cx="12" cy="12" r="3" />
                 </svg>
-                <span className="tracking-wide uppercase">Direct Answer</span>
+                <span className="tracking-wide uppercase">
+                  {isCompareResult ? "Compare" : "Direct Answer"}
+                </span>
               </span>
+
+              <button
+                type="button"
+                onClick={() => copyToClipboard(response.answer)}
+                className={getCopyButtonClass("emerald")}
+                aria-label="Copy answer"
+              >
+                <svg
+                  className={getCopyIconClass("emerald")}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                  />
+                </svg>
+              </button>
             </div>
 
-            <div className="text-sm lg:text-base text-foreground leading-relaxed mb-3 lg:mb-4 whitespace-pre-wrap relative">
-              {response.answer}
-              {hoveredAnswer && (
-                <div className="hidden lg:flex absolute -right-2 top-0 gap-1 animate-in fade-in slide-in-from-right-2 duration-150">
-                  <button
-                    onClick={() => copyToClipboard(response.answer)}
-                    className="w-7 h-7 rounded-lg bg-card/80 backdrop-blur-sm border border-border/50 hover:border-emerald-500/50 flex items-center justify-center transition-all duration-150 hover:bg-emerald-500/10"
-                    aria-label="Copy answer"
-                  >
-                    <svg
-                      className="w-3.5 h-3.5 text-muted-foreground hover:text-emerald-400"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-                      />
-                    </svg>
-                  </button>
+            <div>
+              {isCompareResult ? (
+                renderCompareResults()
+              ) : (
+                <div className="text-sm lg:text-base text-foreground leading-relaxed mb-2.5 lg:mb-4 whitespace-pre-wrap">
+                  {response.answer}
                 </div>
               )}
             </div>
@@ -294,9 +406,7 @@ export function ResponseRenderer({
   if (response.mode === "guided_fallback") {
     return (
       <div
-        className="relative bg-gradient-to-br from-amber-500/10 via-amber-500/5 to-transparent rounded-lg lg:rounded-2xl p-4 lg:p-6 border border-amber-500/20 shadow-lg backdrop-blur-sm group"
-        onMouseEnter={() => setHoveredAnswer(true)}
-        onMouseLeave={() => setHoveredAnswer(false)}
+        className="relative bg-gradient-to-br from-amber-500/10 via-amber-500/5 to-transparent rounded-lg lg:rounded-2xl p-3.5 sm:p-4 lg:p-6 border border-amber-500/20 shadow-lg backdrop-blur-sm group"
       >
         <div className="absolute inset-0 bg-gradient-to-b from-white/[0.03] to-transparent rounded-lg lg:rounded-2xl pointer-events-none" />
 
@@ -322,7 +432,7 @@ export function ResponseRenderer({
           </div>
 
           <div className="flex-1 min-w-0">
-            <div className="mb-2 lg:mb-3">
+            <div className="mb-2.5 lg:mb-3 flex items-start justify-between gap-3">
               <span className="inline-flex items-center gap-1.5 px-2 lg:px-3 py-0.5 lg:py-1 bg-amber-500/20 text-amber-400 rounded-lg backdrop-blur-sm border border-amber-500/30 text-[10px] lg:text-xs">
                 <svg
                   className="w-2 h-2 lg:w-3 lg:h-3"
@@ -333,38 +443,36 @@ export function ResponseRenderer({
                 </svg>
                 <span className="tracking-wide uppercase">Guided Fallback</span>
               </span>
+
+              <button
+                type="button"
+                onClick={() => copyToClipboard(response.answer)}
+                className={getCopyButtonClass("amber")}
+                aria-label="Copy guidance"
+              >
+                <svg
+                  className={getCopyIconClass("amber")}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                  />
+                </svg>
+              </button>
             </div>
 
-            <div className="text-sm lg:text-base text-foreground leading-relaxed whitespace-pre-wrap relative">
+            <div className="text-sm lg:text-base text-foreground leading-relaxed whitespace-pre-wrap">
               {response.answer}
-              {hoveredAnswer && (
-                <div className="hidden lg:flex absolute -right-2 top-0 gap-1 animate-in fade-in slide-in-from-right-2 duration-150">
-                  <button
-                    onClick={() => copyToClipboard(response.answer)}
-                    className="w-7 h-7 rounded-lg bg-card/80 backdrop-blur-sm border border-border/50 hover:border-amber-500/50 flex items-center justify-center transition-all duration-150 hover:bg-amber-500/10"
-                    aria-label="Copy guidance"
-                  >
-                    <svg
-                      className="w-3.5 h-3.5 text-muted-foreground hover:text-amber-400"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-                      />
-                    </svg>
-                  </button>
-                </div>
-              )}
             </div>
 
             {showsMatchedDocuments && (
-              <div className="mt-4 lg:mt-5 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3.5 sm:p-4 lg:p-4">
-                <div className="mb-2.5 sm:mb-3">
+              <div className="mt-3.5 lg:mt-4.5 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 sm:p-3.5 lg:p-4">
+                <div className="mb-2 sm:mb-2.5">
                   <div className="text-[10px] lg:text-xs text-amber-400 uppercase tracking-wider mb-1.5">
                     Multiple Matches
                   </div>
@@ -372,14 +480,14 @@ export function ResponseRenderer({
                     I found multiple matching documents. Choose one to continue, or compare them.
                   </p>
                 </div>
-                <div className="mt-3 grid gap-2.5 sm:gap-2">
+                <div className="mt-2.5 grid gap-2">
                   {matchedDocuments.map((document) => (
                     <button
                       key={document.source || document.display_name}
                       type="button"
                       onClick={() => handleMatchedDocumentClick(document)}
                       disabled={!submittedQuery || !onSubmitQuery || !document.source || isProcessing}
-                      className="w-full min-h-14 flex flex-col items-start gap-2 rounded-xl border border-border/50 bg-card/60 px-3.5 py-3.5 text-left transition-colors hover:border-amber-500/30 hover:bg-amber-500/10 disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-0 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-3 sm:py-3"
+                      className="w-full min-h-12 flex flex-col items-start gap-2 rounded-xl border border-border/50 bg-card/60 px-3 py-3 text-left transition-colors hover:border-amber-500/30 hover:bg-amber-500/10 disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-0 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-3 sm:py-3"
                     >
                       <span className="w-full min-w-0 truncate text-sm lg:text-base text-foreground/90 sm:flex-1 sm:pr-3">
                         {document.display_name}
@@ -406,9 +514,7 @@ export function ResponseRenderer({
   if (response.mode === "hard_refusal") {
     return (
       <div
-        className="relative bg-gradient-to-br from-zinc-500/10 via-zinc-500/5 to-transparent rounded-lg lg:rounded-2xl p-4 lg:p-6 border border-zinc-500/20 shadow-lg backdrop-blur-sm group"
-        onMouseEnter={() => setHoveredAnswer(true)}
-        onMouseLeave={() => setHoveredAnswer(false)}
+        className="relative bg-gradient-to-br from-zinc-500/10 via-zinc-500/5 to-transparent rounded-lg lg:rounded-2xl p-3.5 sm:p-4 lg:p-6 border border-zinc-500/20 shadow-lg backdrop-blur-sm group"
       >
         <div className="absolute inset-0 bg-gradient-to-b from-white/[0.03] to-transparent rounded-lg lg:rounded-2xl pointer-events-none" />
 
@@ -434,7 +540,7 @@ export function ResponseRenderer({
           </div>
 
           <div className="flex-1 min-w-0">
-            <div className="mb-2 lg:mb-3">
+            <div className="mb-2.5 lg:mb-3 flex items-start justify-between gap-3">
               <span className="inline-flex items-center gap-1.5 px-2 lg:px-3 py-0.5 lg:py-1 bg-zinc-500/20 text-zinc-400 rounded-lg backdrop-blur-sm border border-zinc-500/30 text-[10px] lg:text-xs">
                 <svg
                   className="w-2 h-2 lg:w-3 lg:h-3"
@@ -445,33 +551,31 @@ export function ResponseRenderer({
                 </svg>
                 <span className="tracking-wide uppercase">Hard Refusal</span>
               </span>
+
+              <button
+                type="button"
+                onClick={() => copyToClipboard(response.answer)}
+                className={getCopyButtonClass("zinc")}
+                aria-label="Copy reason"
+              >
+                <svg
+                  className={getCopyIconClass("zinc")}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                  />
+                </svg>
+              </button>
             </div>
 
-            <div className="text-sm lg:text-base text-foreground leading-relaxed whitespace-pre-wrap relative">
+            <div className="text-sm lg:text-base text-foreground leading-relaxed whitespace-pre-wrap">
               {response.answer}
-              {hoveredAnswer && (
-                <div className="hidden lg:flex absolute -right-2 top-0 gap-1 animate-in fade-in slide-in-from-right-2 duration-150">
-                  <button
-                    onClick={() => copyToClipboard(response.answer)}
-                    className="w-7 h-7 rounded-lg bg-card/80 backdrop-blur-sm border border-border/50 hover:border-zinc-500/50 flex items-center justify-center transition-all duration-150 hover:bg-zinc-500/10"
-                    aria-label="Copy reason"
-                  >
-                    <svg
-                      className="w-3.5 h-3.5 text-muted-foreground hover:text-zinc-300"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-                      />
-                    </svg>
-                  </button>
-                </div>
-              )}
             </div>
 
             {renderCitations()}

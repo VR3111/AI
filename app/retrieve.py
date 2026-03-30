@@ -22,7 +22,13 @@ def _tenant_chroma_path(tenant_id: str) -> str:
     return os.path.join(TENANTS_ROOT, tenant_id, "chroma")
 
 
-def retrieve(query: str, k: int = 3, tenant_id: str | None = None, return_status: bool = False):
+def retrieve(
+    query: str,
+    k: int = 3,
+    tenant_id: str | None = None,
+    return_status: bool = False,
+    source_filter: str | None = None,
+):
     """
     Tenant-aware retrieval (wrapping only).
     - CI_MODE: returns [] always (status=ci_mode)
@@ -52,7 +58,11 @@ def retrieve(query: str, k: int = 3, tenant_id: str | None = None, return_status
         persist_directory=persist_dir,
         embedding_function=embeddings
     )
-    results = db.similarity_search_with_score(query, k=k)
+    search_kwargs = {"k": k}
+    if source_filter:
+        search_kwargs["filter"] = {"source": source_filter}
+
+    results = db.similarity_search_with_score(query, **search_kwargs)
 
     if return_status:
         return (results, STATUS_OK if results else STATUS_EMPTY_RESULTS)
