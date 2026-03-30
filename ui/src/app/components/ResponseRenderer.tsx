@@ -82,7 +82,11 @@ export function ResponseRenderer({
 
   const handleMatchedDocumentClick = async (document: MatchedDocumentOption) => {
     if (!submittedQuery || !onSubmitQuery || !document.source || isProcessing) return;
-    await onSubmitQuery(submittedQuery, { selectedSource: document.source });
+    await onSubmitQuery(submittedQuery, {
+      selectedSource: document.source,
+      selectedSourceLabel: document.display_name,
+      activateScope: true,
+    });
   };
 
   const renderCitations = () => {

@@ -20,6 +20,8 @@ export interface MatchedDocumentOption {
 
 export interface QuerySubmitOptions {
   selectedSource?: string;
+  selectedSourceLabel?: string;
+  activateScope?: boolean;
 }
 
 // Backend response from POST /query

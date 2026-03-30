@@ -7,9 +7,18 @@ interface ConversationViewerProps {
   onClose: () => void;
   onSubmitQuery?: (query: string, options?: QuerySubmitOptions) => Promise<void>;
   isProcessing?: boolean;
+  activeScopeLabel?: string | null;
+  onClearScope?: () => void;
 }
 
-export function ConversationViewer({ conversation, onClose, onSubmitQuery, isProcessing = false }: ConversationViewerProps) {
+export function ConversationViewer({
+  conversation,
+  onClose,
+  onSubmitQuery,
+  isProcessing = false,
+  activeScopeLabel,
+  onClearScope,
+}: ConversationViewerProps) {
   const [hoveredQueries, setHoveredQueries] = useState<Set<number>>(new Set());
   const [query, setQuery] = useState('');
   const [isFocused, setIsFocused] = useState(false);
@@ -78,6 +87,26 @@ export function ConversationViewer({ conversation, onClose, onSubmitQuery, isPro
 
       <div className="flex-1 overflow-y-auto px-3.5 py-4 sm:p-4 lg:p-8 pb-32 lg:pb-8">
         <div className="max-w-3xl mx-auto w-full space-y-6 lg:space-y-8">
+          {activeScopeLabel && (
+            <div className="flex flex-col items-start gap-2 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3.5 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <div className="text-[10px] uppercase tracking-wider text-amber-400">
+                  Active Document Scope
+                </div>
+                <div className="mt-1 truncate text-sm text-foreground/90">
+                  {activeScopeLabel}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={onClearScope}
+                className="inline-flex items-center rounded-md border border-border/50 bg-card/60 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-amber-500/30 hover:text-foreground"
+              >
+                Clear
+              </button>
+            </div>
+          )}
+
           {conversation.turns.map((turn, idx) => (
             <div key={idx} className="space-y-3 lg:space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-300 lg:duration-500" style={{ animationDelay: `${idx * 30}ms` }}>
               {/* User's Question */}

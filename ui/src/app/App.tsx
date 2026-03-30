@@ -15,6 +15,10 @@ import { QueryResponse, Document, Conversation, QuerySubmitOptions } from "./typ
 import { toast, Toaster } from "sonner";
 
 type View = "query" | "conversation";
+type ConversationScope = {
+  source: string;
+  label: string;
+};
 
 function App() {
   const [authState, setAuthState] = useState(api.getAuthState());
@@ -54,6 +58,9 @@ function App() {
   const [isConfirmAccountDeleteOpen, setIsConfirmAccountDeleteOpen] =
     useState(false);
   const [isAuthReady, setIsAuthReady] = useState(false);
+  const [conversationScopes, setConversationScopes] = useState<
+    Record<string, ConversationScope>
+  >({});
   const previousIdentityKeyRef = useRef<string | null>(null);
   const isCompletingGuestUpgradeRef = useRef(false);
 
@@ -114,6 +121,7 @@ function App() {
       setCurrentView("query");
       setCurrentResponse(null);
       setSubmittedQuery("");
+      setConversationScopes({});
     }
 
     previousIdentityKeyRef.current = nextIdentityKey;
@@ -224,22 +232,45 @@ function App() {
     toast.success("Started new conversation");
   };
 
+  const getActiveConversationId = () =>
+    selectedConversationId ?? api.getCurrentConversationId();
+
+  const activeConversationId = getActiveConversationId();
+  const activeScope = activeConversationId
+    ? conversationScopes[activeConversationId] ?? null
+    : null;
+
   const handleSubmitQuery = async (query: string, options?: QuerySubmitOptions) => {
     console.log("SUBMIT_QUERY_CALLED", query);
     setIsProcessing(true); // safe to do BEFORE await
 
     try {
       console.log("APP_BEFORE_AWAIT_SUBMIT_QUERY");
+      const conversationId = getActiveConversationId() ?? undefined;
+      const selectedSource = options?.selectedSource ?? activeScope?.source;
       const response = await api.submitQuery(
         query,
-        selectedConversationId ?? undefined,
-        options,
+        conversationId,
+        selectedSource ? { selectedSource } : undefined,
       );
 
       setSubmittedQuery(query);
       setCurrentResponse(response);
 
       const convId = response.conversation_id;
+
+      if (options?.activateScope && options.selectedSource) {
+        setConversationScopes((prev) => ({
+          ...prev,
+          [convId]: {
+            source: options.selectedSource!,
+            label:
+              options.selectedSourceLabel ||
+              activeScope?.label ||
+              options.selectedSource!,
+          },
+        }));
+      }
 
       setSelectedConversationId(convId);
       setCurrentView("conversation");
@@ -336,6 +367,11 @@ function App() {
       setConversations((prev) =>
         prev.filter((conv) => conv.conversation_id !== conversationId)
       );
+      setConversationScopes((prev) => {
+        const next = { ...prev };
+        delete next[conversationId];
+        return next;
+      });
 
       if (selectedConversationId === conversationId) {
         setSelectedConversationId(null);
@@ -353,6 +389,17 @@ function App() {
     setSelectedConversationId(null);
     setSelectedConversationDetail(null);
     setCurrentView("query");
+  };
+
+  const handleClearActiveScope = () => {
+    const conversationId = getActiveConversationId();
+    if (!conversationId) return;
+
+    setConversationScopes((prev) => {
+      const next = { ...prev };
+      delete next[conversationId];
+      return next;
+    });
   };
 
   const handleShare = () => {
@@ -380,6 +427,7 @@ function App() {
     setPendingDeleteDocument(null);
     setIsConfirmDeleteOpen(false);
     setIsConfirmAccountDeleteOpen(false);
+    setConversationScopes({});
     await loadDocuments();
     await loadConversations();
   };
@@ -416,6 +464,7 @@ function App() {
       setPendingDeleteDocument(null);
       setIsConfirmDeleteOpen(false);
       setIsConfirmAccountDeleteOpen(false);
+      setConversationScopes({});
       await loadDocuments();
       await loadConversations();
       toast.success("Account deleted");
@@ -678,6 +727,8 @@ function App() {
                 currentResponse={currentResponse}
                 isProcessing={isProcessing}
                 submittedQuery={submittedQuery}
+                activeScopeLabel={activeScope?.label ?? null}
+                onClearScope={handleClearActiveScope}
               />
             ) : selectedConversationDetail ? (
               <ConversationViewer
@@ -685,6 +736,8 @@ function App() {
                 onClose={handleCloseConversation}
                 onSubmitQuery={handleSubmitQuery}
                 isProcessing={isProcessing}
+                activeScopeLabel={activeScope?.label ?? null}
+                onClearScope={handleClearActiveScope}
               />
             ) : null}
           </div>

@@ -7,6 +7,8 @@ interface QueryInterfaceProps {
   currentResponse: QueryResponse | null;
   isProcessing: boolean;
   submittedQuery?: string;
+  activeScopeLabel?: string | null;
+  onClearScope?: () => void;
 }
 
 export function QueryInterface({
@@ -14,6 +16,8 @@ export function QueryInterface({
   currentResponse,
   isProcessing,
   submittedQuery,
+  activeScopeLabel,
+  onClearScope,
 }: QueryInterfaceProps) {
   const [query, setQuery] = useState('');
   const [isFocused, setIsFocused] = useState(false);
@@ -45,6 +49,28 @@ export function QueryInterface({
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 lg:p-8 pb-32 lg:pb-8">
+        {activeScopeLabel && (
+          <div className="max-w-3xl mx-auto mb-4 lg:mb-6">
+            <div className="flex flex-col items-start gap-2 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3.5 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <div className="text-[10px] uppercase tracking-wider text-amber-400">
+                  Active Document Scope
+                </div>
+                <div className="mt-1 truncate text-sm text-foreground/90">
+                  {activeScopeLabel}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={onClearScope}
+                className="inline-flex items-center rounded-md border border-border/50 bg-card/60 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-amber-500/30 hover:text-foreground"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+        )}
+
         {currentResponse && submittedQuery ? (
           <div className="max-w-3xl mx-auto space-y-4 lg:space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300 lg:duration-500">
             {/* User's Question */}
