@@ -14,6 +14,8 @@ interface LeftSidebarProps {
   onUploadDocument: (file: File) => void;
   onIndexDocument: (documentId: string) => void;
   onDeleteDocument: (documentId: string) => void;
+  onOpenDocumentWorkspace: (document: Document) => void;
+  onStartNewDocumentWorkspaceChat: (document: Document) => void;
   onOpenSettings: () => void;
   onOpenSupport: () => void;
   onOpenAuth: () => void;
@@ -37,6 +39,8 @@ export function LeftSidebar({
   onUploadDocument,
   onIndexDocument,
   onDeleteDocument,
+  onOpenDocumentWorkspace,
+  onStartNewDocumentWorkspaceChat,
   onOpenSettings,
   onOpenSupport,
   onOpenAuth,
@@ -160,10 +164,14 @@ export function LeftSidebar({
   };
 
   const getConversationSearchText = (conv: Conversation): string => {
-    if (conv.title && conv.title.trim()) return conv.title;
+    if (conv.title && conv.title.trim()) {
+      return [conv.title, conv.scope?.label || ""].filter(Boolean).join(" ");
+    }
     const firstTurnQuery = conv.turns?.[0]?.query;
-    if (firstTurnQuery && firstTurnQuery.trim()) return firstTurnQuery;
-    return conv.conversation_id;
+    if (firstTurnQuery && firstTurnQuery.trim()) {
+      return [firstTurnQuery, conv.scope?.label || ""].filter(Boolean).join(" ");
+    }
+    return [conv.conversation_id, conv.scope?.label || ""].filter(Boolean).join(" ");
   };
 
   const filteredConversations = conversations.filter((conv) => {
@@ -392,7 +400,11 @@ export function LeftSidebar({
                           compactView ? "p-2" : "p-3"
                         }`}
                       >
-                        <div className="flex items-start gap-2 mb-2">
+                        <button
+                          type="button"
+                          onClick={() => onOpenDocumentWorkspace(doc)}
+                          className="mb-2 flex w-full items-start gap-2 rounded-md text-left transition-colors hover:bg-background/30"
+                        >
                           <svg
                             className="w-4 h-4 text-primary flex-shrink-0 mt-0.5"
                             fill="none"
@@ -408,8 +420,13 @@ export function LeftSidebar({
                           </svg>
 
                           <div className="flex-1 min-w-0">
-                            <div className="text-sm truncate text-foreground/90 mb-1">
-                              {doc.filename}
+                            <div className="flex items-start justify-between gap-2 mb-1">
+                              <div className="text-sm truncate text-foreground/90">
+                                {doc.filename}
+                              </div>
+                              <span className="inline-flex shrink-0 items-center rounded-md border border-primary/20 bg-primary/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-primary">
+                                Workspace
+                              </span>
                             </div>
 
                             <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
@@ -441,10 +458,7 @@ export function LeftSidebar({
                                   Indexed
                                 </span>
                               ) : (
-                                <button
-                                  onClick={() => onIndexDocument(doc.filename)}
-                                  className="inline-flex items-center gap-1 px-2 py-0.5 bg-primary/10 text-primary rounded text-[10px] border border-primary/20 hover:bg-primary/20 transition-all duration-200"
-                                >
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-zinc-500/20 text-zinc-400 rounded text-[10px] border border-zinc-500/30 transition-all duration-200">
                                   <svg
                                     className="w-2 h-2"
                                     fill="none"
@@ -458,12 +472,28 @@ export function LeftSidebar({
                                       d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
                                     />
                                   </svg>
-                                  Index
-                                </button>
+                                  Not Indexed
+                                </span>
                               )}
                             </div>
                           </div>
-                        </div>
+                        </button>
+
+                        {!doc.indexed && (
+                          <button
+                            onClick={() => onIndexDocument(doc.filename)}
+                            className="mb-1.5 w-full rounded-lg border border-primary/20 bg-primary/10 px-3 py-1.5 text-xs text-primary transition-all duration-200 hover:bg-primary/20 hover:border-primary/30"
+                          >
+                            Trigger Indexing
+                          </button>
+                        )}
+
+                        <button
+                          onClick={() => onStartNewDocumentWorkspaceChat(doc)}
+                          className="mb-1.5 w-full rounded-lg border border-border/40 bg-card/60 px-3 py-1.5 text-xs text-foreground/85 transition-all duration-200 hover:border-primary/25 hover:bg-primary/5"
+                        >
+                          New Chat
+                        </button>
 
                         <button
                           onClick={() => {
@@ -607,6 +637,11 @@ export function LeftSidebar({
                         conversation.title?.trim() ||
                         firstTurn?.query?.trim() ||
                         "New conversation";
+                      const scope = conversation.scope;
+                      const workspaceLabel =
+                        scope?.label?.trim() ||
+                        scope?.source?.split("/").pop() ||
+                        "";
 
                       return (
                         <div
@@ -656,7 +691,25 @@ export function LeftSidebar({
                                 </div>
 
                                 <div className="flex-1 min-w-0 text-sm text-foreground/90 truncate whitespace-nowrap overflow-hidden">
-                                  {previewText}
+                                  <div className="truncate whitespace-nowrap overflow-hidden">
+                                    {previewText}
+                                  </div>
+                                  {scope && (
+                                    <div className="mt-1 flex items-center gap-1.5">
+                                      <span
+                                        className={`inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] tracking-wide ${
+                                          scope.mode === "document"
+                                            ? "border-primary/20 bg-primary/10 text-primary"
+                                            : "border-amber-500/20 bg-amber-500/10 text-amber-400"
+                                        }`}
+                                      >
+                                        {scope.mode === "document" ? "Workspace" : "Scoped"}
+                                      </span>
+                                      <span className="truncate text-[10px] text-muted-foreground">
+                                        {workspaceLabel}
+                                      </span>
+                                    </div>
+                                  )}
                                 </div>
                               </div>
                             </button>

@@ -11,14 +11,18 @@ import { ConfirmDeleteDialog } from "./components/ConfirmDeleteDialog";
 import { ConfirmAccountDeleteDialog } from "./components/ConfirmAccountDeleteDialog";
 import { SupportCenter } from "./components/SupportCenter";
 import { api } from "./services/api";
-import { QueryResponse, Document, Conversation, QuerySubmitOptions } from "./types/api";
+import {
+  QueryResponse,
+  Document,
+  Conversation,
+  QuerySubmitOptions,
+  WorkspaceScope,
+  ConversationScopeMeta,
+} from "./types/api";
 import { toast, Toaster } from "sonner";
 
 type View = "query" | "conversation";
-type ConversationScope = {
-  source: string;
-  label: string;
-};
+type ConversationScope = ConversationScopeMeta;
 
 function App() {
   const [authState, setAuthState] = useState(api.getAuthState());
@@ -61,8 +65,54 @@ function App() {
   const [conversationScopes, setConversationScopes] = useState<
     Record<string, ConversationScope>
   >({});
+  const [draftWorkspaceScope, setDraftWorkspaceScope] =
+    useState<ConversationScope | null>(null);
   const previousIdentityKeyRef = useRef<string | null>(null);
   const isCompletingGuestUpgradeRef = useRef(false);
+
+  const syncConversationScope = (
+    conversationId: string,
+    scope: ConversationScope | null,
+  ) => {
+    setConversationScopes((prev) => {
+      const next = { ...prev };
+      if (scope) {
+        next[conversationId] = scope;
+      } else {
+        delete next[conversationId];
+      }
+      return next;
+    });
+  };
+
+  const getScopeFromResponse = (
+    response: QueryResponse | null | undefined,
+  ): ConversationScope | null => {
+    const selectedSource = response?.artifacts?.selected_source?.trim();
+    if (!selectedSource) {
+      return null;
+    }
+
+    return {
+      source: selectedSource,
+      label:
+        response?.artifacts?.selected_source_display_name?.trim() ||
+        selectedSource.split("/").pop() ||
+        selectedSource,
+      mode: response?.artifacts?.workspace_scope === "document" ? "document" : "global",
+    };
+  };
+
+  const getScopeFromConversation = (
+    conversation: Conversation | null,
+  ): ConversationScope | null => {
+    if (conversation?.scope) {
+      return conversation.scope;
+    }
+    const turns = conversation?.turns ?? [];
+    const lastTurn = turns[turns.length - 1];
+    return getScopeFromResponse(lastTurn?.response);
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -122,6 +172,7 @@ function App() {
       setCurrentResponse(null);
       setSubmittedQuery("");
       setConversationScopes({});
+      setDraftWorkspaceScope(null);
     }
 
     previousIdentityKeyRef.current = nextIdentityKey;
@@ -215,6 +266,15 @@ function App() {
     try {
       const convs = await api.listConversations();
       setConversations(convs);
+      setConversationScopes((prev) => {
+        const next = { ...prev };
+        for (const conv of convs) {
+          if (conv.scope) {
+            next[conv.conversation_id] = conv.scope;
+          }
+        }
+        return next;
+      });
     } catch (error) {
       toast.error("Failed to load conversations");
     } finally {
@@ -229,6 +289,7 @@ function App() {
     setCurrentView("query");
     setCurrentResponse(null);
     setSubmittedQuery("");
+    setDraftWorkspaceScope(null);
     toast.success("Started new conversation");
   };
 
@@ -236,9 +297,13 @@ function App() {
     selectedConversationId ?? api.getCurrentConversationId();
 
   const activeConversationId = getActiveConversationId();
-  const activeScope = activeConversationId
+  const activeConversationScope = activeConversationId
     ? conversationScopes[activeConversationId] ?? null
     : null;
+  const activeScope =
+    currentView === "conversation"
+      ? activeConversationScope
+      : draftWorkspaceScope ?? activeConversationScope;
 
   const handleSubmitQuery = async (query: string, options?: QuerySubmitOptions) => {
     console.log("SUBMIT_QUERY_CALLED", query);
@@ -248,28 +313,38 @@ function App() {
       console.log("APP_BEFORE_AWAIT_SUBMIT_QUERY");
       const conversationId = getActiveConversationId() ?? undefined;
       const selectedSource = options?.selectedSource ?? activeScope?.source;
+      const workspaceScope = options?.workspaceScope ?? activeScope?.mode ?? "global";
+      const scopeToPersist =
+        selectedSource
+          ? {
+              source: selectedSource,
+              label:
+                options?.selectedSourceLabel ||
+                activeScope?.label ||
+                selectedSource.split("/").pop() ||
+                selectedSource,
+              mode: workspaceScope,
+            }
+          : null;
       const response = await api.submitQuery(
         query,
         conversationId,
-        selectedSource ? { selectedSource } : undefined,
+        {
+          selectedSource,
+          workspaceScope,
+        },
       );
 
       setSubmittedQuery(query);
       setCurrentResponse(response);
 
       const convId = response.conversation_id;
-
-      if (options?.activateScope && options.selectedSource) {
-        setConversationScopes((prev) => ({
-          ...prev,
-          [convId]: {
-            source: options.selectedSource!,
-            label:
-              options.selectedSourceLabel ||
-              activeScope?.label ||
-              options.selectedSource!,
-          },
-        }));
+      const responseScope = getScopeFromResponse(response);
+      syncConversationScope(convId, responseScope ?? scopeToPersist);
+      if (scopeToPersist?.mode === "document") {
+        setDraftWorkspaceScope(scopeToPersist);
+      } else {
+        setDraftWorkspaceScope(null);
       }
 
       setSelectedConversationId(convId);
@@ -277,6 +352,7 @@ function App() {
 
       const conversationDetail = await api.getConversation(convId);
       setSelectedConversationDetail(conversationDetail);
+      syncConversationScope(convId, getScopeFromConversation(conversationDetail));
 
       await loadConversations();
     } catch (error) {
@@ -347,20 +423,65 @@ function App() {
     await handleDeleteDocument(filename);
   };
 
+  const handleOpenDocumentWorkspace = (document: Document) => {
+    const existingWorkspaceConversation = conversations.find(
+      (conversation) =>
+        conversation.scope?.mode === "document" &&
+        conversation.scope.source === document.source,
+    );
+
+    if (existingWorkspaceConversation) {
+      void handleSelectConversation(existingWorkspaceConversation.conversation_id);
+      return;
+    }
+
+    handleStartNewDocumentWorkspaceChat(document);
+  };
+
+  const handleStartNewDocumentWorkspaceChat = (document: Document) => {
+    api.resetConversation();
+    setSelectedConversationId(null);
+    setSelectedConversationDetail(null);
+    setCurrentView("query");
+    setCurrentResponse(null);
+    setSubmittedQuery("");
+    setDraftWorkspaceScope({
+      source: document.source,
+      label: document.filename,
+      mode: "document",
+    });
+  };
+
   const handleSelectConversation = async (conversationId: string) => {
+    setDraftWorkspaceScope(null);
     setSelectedConversationId(conversationId);
     setCurrentView("conversation");
 
     try {
       const conversationDetail = await api.getConversation(conversationId);
       setSelectedConversationDetail(conversationDetail);
+      syncConversationScope(
+        conversationId,
+        getScopeFromConversation(conversationDetail),
+      );
     } catch (error) {
       toast.error("Failed to load conversation details");
       setSelectedConversationDetail(null);
+      syncConversationScope(conversationId, null);
     }
   };
 
   const handleDeleteConversation = async (conversationId: string) => {
+    await handleDeleteConversationWithOptions(conversationId);
+  };
+
+  const handleDeleteConversationWithOptions = async (
+    conversationId: string,
+    options?: {
+      preserveDraftScope?: ConversationScope | null;
+      successMessage?: string;
+    },
+  ) => {
     try {
       await api.deleteConversation(conversationId);
 
@@ -377,21 +498,29 @@ function App() {
         setSelectedConversationId(null);
         setSelectedConversationDetail(null);
         setCurrentView("query");
+        setCurrentResponse(null);
+        setSubmittedQuery("");
+        setDraftWorkspaceScope(options?.preserveDraftScope ?? null);
       }
 
-      toast.success("Conversation deleted");
+      toast.success(options?.successMessage || "Conversation deleted");
     } catch (error) {
       toast.error("Failed to delete conversation");
     }
   };
 
   const handleCloseConversation = () => {
+    const scope =
+      selectedConversationId ? conversationScopes[selectedConversationId] ?? null : null;
     setSelectedConversationId(null);
     setSelectedConversationDetail(null);
     setCurrentView("query");
+    setDraftWorkspaceScope(scope?.mode === "document" ? scope : null);
   };
 
   const handleClearActiveScope = () => {
+    if (activeScope?.mode === "document") return;
+
     const conversationId = getActiveConversationId();
     if (!conversationId) return;
 
@@ -399,6 +528,51 @@ function App() {
       const next = { ...prev };
       delete next[conversationId];
       return next;
+    });
+  };
+
+  const handleExitDocumentWorkspace = () => {
+    handleNewConversation();
+  };
+
+  const handleClearCurrentDocumentWorkspaceChat = async () => {
+    if (activeScope?.mode !== "document") {
+      return;
+    }
+
+    const preservedScope = activeScope;
+    const conversationId = selectedConversationId ?? api.getCurrentConversationId();
+
+    if (conversationId) {
+      await handleDeleteConversationWithOptions(conversationId, {
+        preserveDraftScope: preservedScope,
+        successMessage: "Workspace chat cleared",
+      });
+      api.resetConversation();
+      return;
+    }
+
+    api.resetConversation();
+    setSelectedConversationId(null);
+    setSelectedConversationDetail(null);
+    setCurrentView("query");
+    setCurrentResponse(null);
+    setSubmittedQuery("");
+    setDraftWorkspaceScope(preservedScope);
+    toast.success("Workspace chat cleared");
+  };
+
+  const handleStartNewActiveDocumentWorkspaceChat = () => {
+    if (activeScope?.mode !== "document") {
+      return;
+    }
+
+    handleStartNewDocumentWorkspaceChat({
+      filename: activeScope.label,
+      source: activeScope.source,
+      uploaded_at: "",
+      size_bytes: 0,
+      indexed: true,
     });
   };
 
@@ -428,6 +602,7 @@ function App() {
     setIsConfirmDeleteOpen(false);
     setIsConfirmAccountDeleteOpen(false);
     setConversationScopes({});
+    setDraftWorkspaceScope(null);
     await loadDocuments();
     await loadConversations();
   };
@@ -465,6 +640,7 @@ function App() {
       setIsConfirmDeleteOpen(false);
       setIsConfirmAccountDeleteOpen(false);
       setConversationScopes({});
+      setDraftWorkspaceScope(null);
       await loadDocuments();
       await loadConversations();
       toast.success("Account deleted");
@@ -645,6 +821,8 @@ function App() {
               onUploadDocument={handleUploadDocument}
               onIndexDocument={handleTriggerIndexing}
               onDeleteDocument={handleRequestDeleteDocument}
+              onOpenDocumentWorkspace={handleOpenDocumentWorkspace}
+              onStartNewDocumentWorkspaceChat={handleStartNewDocumentWorkspaceChat}
               onOpenSettings={() => setIsSettingsOpen(true)}
               onOpenSupport={() => setIsSupportCenterOpen(true)}
               onOpenAuth={() => setIsAuthDialogOpen(true)}
@@ -677,6 +855,8 @@ function App() {
             onUploadDocument={handleUploadDocument}
             onIndexDocument={handleTriggerIndexing}
             onDeleteDocument={handleRequestDeleteDocument}
+            onOpenDocumentWorkspace={handleOpenDocumentWorkspace}
+            onStartNewDocumentWorkspaceChat={handleStartNewDocumentWorkspaceChat}
             onSignOut={handleSignOut}
             isLoadingDocuments={isLoadingDocuments}
             isLoadingConversations={isLoadingConversations}
@@ -727,8 +907,11 @@ function App() {
                 currentResponse={currentResponse}
                 isProcessing={isProcessing}
                 submittedQuery={submittedQuery}
-                activeScopeLabel={activeScope?.label ?? null}
+                activeScope={activeScope}
                 onClearScope={handleClearActiveScope}
+                onExitDocumentWorkspace={handleExitDocumentWorkspace}
+                onNewDocumentWorkspaceChat={handleStartNewActiveDocumentWorkspaceChat}
+                onClearDocumentWorkspaceChat={handleClearCurrentDocumentWorkspaceChat}
               />
             ) : selectedConversationDetail ? (
               <ConversationViewer
@@ -736,8 +919,11 @@ function App() {
                 onClose={handleCloseConversation}
                 onSubmitQuery={handleSubmitQuery}
                 isProcessing={isProcessing}
-                activeScopeLabel={activeScope?.label ?? null}
+                activeScope={activeScope}
                 onClearScope={handleClearActiveScope}
+                onExitDocumentWorkspace={handleExitDocumentWorkspace}
+                onNewDocumentWorkspaceChat={handleStartNewActiveDocumentWorkspaceChat}
+                onClearDocumentWorkspaceChat={handleClearCurrentDocumentWorkspaceChat}
               />
             ) : null}
           </div>

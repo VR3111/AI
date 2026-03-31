@@ -18,6 +18,8 @@ export interface MatchedDocumentOption {
   display_name: string;
 }
 
+export type WorkspaceScope = "global" | "document";
+
 export interface CompareResultItem {
   source: string;
   display_name: string;
@@ -29,6 +31,13 @@ export interface QuerySubmitOptions {
   selectedSource?: string;
   selectedSourceLabel?: string;
   activateScope?: boolean;
+  workspaceScope?: WorkspaceScope;
+}
+
+export interface ConversationScopeMeta {
+  source: string;
+  label: string;
+  mode: WorkspaceScope;
 }
 
 // Backend response from POST /query
@@ -49,6 +58,9 @@ export interface QueryResponse {
     compare_results?: CompareResultItem[];
     matched_documents?: string[];
     matched_document_options?: MatchedDocumentOption[];
+    selected_source?: string;
+    selected_source_display_name?: string;
+    workspace_scope?: WorkspaceScope;
   };
   debug: any | null;
 }
@@ -81,6 +93,9 @@ export interface ConversationListItem {
   created_at: string;
   last_activity_at: string;
   title?: string;
+  selected_source?: string;
+  selected_source_display_name?: string;
+  workspace_scope?: WorkspaceScope;
 }
 
 export interface ConversationsListResponse {
@@ -95,11 +110,13 @@ export interface Conversation {
   last_activity_at: string;
   title?: string;
   turns?: ConversationTurn[];
+  scope?: ConversationScopeMeta | null;
 }
 
 // Backend response from GET /tenants/{id}/documents
 export interface DocumentListItem {
   filename: string;
+  source: string;
   size_bytes: number;
   uploaded_at: string;
 }
@@ -112,6 +129,7 @@ export interface DocumentsListResponse {
 // UI-friendly document type
 export interface Document {
   filename: string;
+  source: string;
   uploaded_at: string;
   size_bytes: number;
   indexed: boolean;

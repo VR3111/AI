@@ -19,6 +19,8 @@ interface MobileDrawerProps {
   onUploadDocument: (file: File) => void;
   onIndexDocument: (documentId: string) => void;
   onDeleteDocument: (documentId: string) => void;
+  onOpenDocumentWorkspace: (document: Document) => void;
+  onStartNewDocumentWorkspaceChat: (document: Document) => void;
   isLoadingDocuments?: boolean;
   isLoadingConversations?: boolean;
   showDocumentBadges?: boolean;
@@ -41,6 +43,8 @@ export function MobileDrawer({
   onUploadDocument,
   onIndexDocument,
   onDeleteDocument,
+  onOpenDocumentWorkspace,
+  onStartNewDocumentWorkspaceChat,
   isLoadingDocuments = false,
   isLoadingConversations = false,
   showDocumentBadges = true,
@@ -203,6 +207,14 @@ export function MobileDrawer({
           onUploadDocument={onUploadDocument}
           onIndexDocument={onIndexDocument}
           onDeleteDocument={onDeleteDocument}
+          onOpenDocumentWorkspace={(document) => {
+            onOpenDocumentWorkspace(document);
+            onClose();
+          }}
+          onStartNewDocumentWorkspaceChat={(document) => {
+            onStartNewDocumentWorkspaceChat(document);
+            onClose();
+          }}
           onOpenSettings={() => {
             onOpenSettings(); // open SettingsPanel
             onClose(); // close drawer

@@ -274,6 +274,7 @@ def list_documents(tenant_id: str):
         documents.append(
             {
                 "filename": filename,
+                "source": file_path,
                 "size_bytes": stat.st_size,
                 "uploaded_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
             }

@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import json
 from fastapi import APIRouter, Request, HTTPException
 from app.persist import generate_conversation_title
 
@@ -107,16 +108,48 @@ def list_conversations(request: Request):
         rows = conn.execute(
             """
             SELECT
-              conversation_id,
-              title,
-              created_at,
-              last_activity_at
-            FROM conversations
+              c.conversation_id,
+              c.title,
+              c.created_at,
+              c.last_activity_at,
+              q.artifacts_json AS latest_artifacts_json
+            FROM conversations c
+            LEFT JOIN queries q
+              ON q.tenant_id = c.tenant_id
+             AND q.conversation_id = c.conversation_id
+             AND q.created_at = (
+                SELECT MAX(q2.created_at)
+                FROM queries q2
+                WHERE q2.tenant_id = c.tenant_id
+                  AND q2.conversation_id = c.conversation_id
+             )
             ORDER BY last_activity_at DESC
             """
         ).fetchall()
 
-        conversations = [dict(row) for row in rows]
+        conversations = []
+        for row in rows:
+            conversation = dict(row)
+            artifacts_json = conversation.pop("latest_artifacts_json", None)
+            artifacts = {}
+            if artifacts_json:
+                try:
+                    artifacts = json.loads(artifacts_json)
+                except json.JSONDecodeError:
+                    artifacts = {}
+
+            selected_source = artifacts.get("selected_source")
+            if isinstance(selected_source, str) and selected_source.strip():
+                conversation["selected_source"] = selected_source.strip()
+                conversation["selected_source_display_name"] = str(
+                    artifacts.get("selected_source_display_name") or ""
+                ).strip() or os.path.basename(selected_source.strip())
+                workspace_scope = str(artifacts.get("workspace_scope") or "global").strip().lower()
+                conversation["workspace_scope"] = (
+                    workspace_scope if workspace_scope in {"global", "document"} else "global"
+                )
+
+            conversations.append(conversation)
 
         return {
             "tenant_id": tenant_id,

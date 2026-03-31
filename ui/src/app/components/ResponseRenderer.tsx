@@ -128,6 +128,7 @@ export function ResponseRenderer({
       selectedSource: document.source,
       selectedSourceLabel: document.display_name,
       activateScope: true,
+      workspaceScope: "global",
     });
   };
 

@@ -5,6 +5,7 @@ import sqlite3
 import smtplib
 import logging
 import traceback
+from types import SimpleNamespace
 from datetime import datetime, timezone
 from email.message import EmailMessage
 from typing import Optional, Any
@@ -362,6 +363,7 @@ class QueryRequest(BaseModel):
     conversation_id: str
     tenant_id: Optional[str] = None
     selected_source: Optional[str] = None
+    workspace_scope: Optional[str] = None
     debug: bool = False
 
 
@@ -615,6 +617,75 @@ def _normalize_extracted_field_value(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
+def _has_nearby_value_hint(
+    match_suffix: str,
+    text: str,
+    line_end: int,
+    value_hint_pattern: re.Pattern[str],
+) -> bool:
+    preview = match_suffix[:60]
+    if value_hint_pattern.search(preview):
+        return True
+
+    if line_end >= len(text):
+        return False
+
+    next_line_start = line_end + 1
+    next_line_end = text.find("\n", next_line_start)
+    if next_line_end < 0:
+        next_line_end = len(text)
+    next_line = text[next_line_start:next_line_end].strip()
+    if not next_line:
+        return False
+
+    return bool(value_hint_pattern.search(next_line[:60]))
+
+
+def _is_non_answer_field_context(
+    *,
+    focus_phrase: str | None,
+    match_prefix: str,
+    match_suffix: str,
+    value: str,
+) -> bool:
+    context = _normalize_for_match(f"{match_prefix} {match_suffix} {value}")
+    normalized_focus = _normalize_for_match(focus_phrase or "")
+
+    if "additional card" in context or "additional cards" in context:
+        return True
+
+    if any(
+        token in context
+        for token in (
+            "rates and fees table",
+            "refer to the refund policy",
+            "refund policy",
+            "closing or suspending your account",
+            "voluntarily closing your account",
+            "if your account is cancelled",
+            "if an annual fee applies",
+        )
+    ):
+        return True
+
+    if normalized_focus == "annual fee" and any(
+        token in context
+        for token in (
+            "non refundable",
+            "refund",
+            "cancelled",
+            "closing date",
+            "billing statement",
+            "re open it",
+            "reopen it",
+            "close your account",
+        )
+    ):
+        return True
+
+    return False
+
+
 def _extract_field_value_from_line(
     text: str,
     focus_phrase: str | None,
@@ -643,6 +714,14 @@ def _extract_field_value_from_line(
             match_offset = match.end() - line_start
             match_prefix = line[:match.start() - line_start]
             match_suffix = line[match_offset:].lstrip(" :.-\t")
+            if not _has_nearby_value_hint(
+                match_suffix,
+                text,
+                line_end,
+                value_hint_pattern,
+            ):
+                continue
+
             continuation_end = line_end
             for _ in range(2):
                 if (
@@ -680,6 +759,14 @@ def _extract_field_value_from_line(
             if _is_referral_value(value):
                 continue
 
+            if _is_non_answer_field_context(
+                focus_phrase=focus_phrase,
+                match_prefix=match_prefix,
+                match_suffix=match_suffix,
+                value=value,
+            ):
+                continue
+
             if not value_hint_pattern.search(value):
                 continue
 
@@ -710,6 +797,14 @@ def _find_field_value_start(text: str, focus_phrase: str | None) -> int | None:
                 continue
 
             if _is_referral_value(value):
+                continue
+
+            if _is_non_answer_field_context(
+                focus_phrase=focus_phrase,
+                match_prefix=match_prefix,
+                match_suffix=value,
+                value=value,
+            ):
                 continue
 
             return match.start()
@@ -755,6 +850,14 @@ def _extract_field_value(text: str, focus_phrase: str | None) -> str | None:
                 continue
 
             if _is_referral_value(value):
+                continue
+
+            if _is_non_answer_field_context(
+                focus_phrase=focus_phrase,
+                match_prefix=match_prefix,
+                match_suffix=value,
+                value=value,
+            ):
                 continue
 
             return "None" if re.fullmatch(r"no\s+ne|none", value, re.I) else value
@@ -819,6 +922,22 @@ def _source_display_name(source: Any) -> str:
     if not source_text:
         return "Unknown source"
     return os.path.basename(source_text)
+
+
+def _merge_scope_artifacts(
+    artifacts: dict[str, Any],
+    *,
+    selected_source: str | None,
+    workspace_scope: str,
+) -> dict[str, Any]:
+    merged = dict(artifacts)
+    if selected_source:
+        merged["selected_source"] = selected_source
+        merged["selected_source_display_name"] = _source_display_name(selected_source)
+        merged["workspace_scope"] = (
+            "document" if workspace_scope == "document" else "global"
+        )
+    return merged
 
 
 def _normalize_source_match_text(text: str) -> str:
@@ -1318,6 +1437,168 @@ def _compare_result_for_source(
     )
 
 
+def _select_best_field_value_result(
+    query: str,
+    results: list[tuple[Any, float]],
+) -> tuple[str | None, tuple[Any, float] | None]:
+    focus_phrase = _extract_focus_phrase(query) or query.strip().lower() or None
+    best_value: str | None = None
+    best_result: tuple[Any, float] | None = None
+    best_rank: tuple[int, float, int] | None = None
+
+    for index, (doc, score) in enumerate(results):
+        field_value = _extract_field_value(doc.page_content or "", focus_phrase)
+        if not field_value:
+            continue
+
+        page = doc.metadata.get("page")
+        page_rank = int(page) if isinstance(page, int) else 9999
+        rank = (page_rank, score, index)
+        if best_rank is None or rank < best_rank:
+            best_rank = rank
+            best_value = field_value
+            best_result = (doc, score)
+
+    return best_value, best_result
+
+
+def _scan_source_document_for_field_value(
+    *,
+    source: str,
+    query: str,
+) -> tuple[str | None, tuple[Any, float] | None]:
+    source_path = str(source or "").strip()
+    if not source_path or not os.path.isfile(source_path):
+        return None, None
+
+    if not source_path.lower().endswith(".pdf"):
+        return None, None
+
+    try:
+        from pypdf import PdfReader
+    except Exception:
+        return None, None
+
+    focus_phrase = _extract_focus_phrase(query) or query.strip().lower() or None
+
+    try:
+        reader = PdfReader(source_path)
+    except Exception:
+        return None, None
+
+    for page_index, page in enumerate(reader.pages):
+        text = page.extract_text() or ""
+        if not text.strip():
+            continue
+
+        field_value = _extract_field_value(text, focus_phrase)
+        if not field_value:
+            continue
+
+        return (
+            field_value,
+            (
+                SimpleNamespace(
+                    page_content=text,
+                    metadata={"source": source_path, "page": page_index},
+                ),
+                0.0,
+            ),
+        )
+
+    return None, None
+
+
+def _document_workspace_compare_focus_query(query: str) -> str:
+    cleaned = _clean_compare_focus_query(query)
+    cleaned = re.sub(r"\b(?:vs|versus)\b.+$", "", cleaned, flags=re.I).strip()
+    cleaned = re.split(
+        r"\b(?:for|between)\b",
+        cleaned,
+        maxsplit=1,
+        flags=re.I,
+    )[0].strip()
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" .,:;?")
+    return cleaned or query.strip()
+
+
+def _build_document_workspace_compare_answer(
+    *,
+    source: str,
+    compare_focus_query: str,
+    field_value: str | None,
+) -> str:
+    display_name = _source_display_name(source)
+    readable_name = re.sub(r"\.[a-z0-9]+$", "", display_name, flags=re.I)
+    readable_name = re.sub(r"[-_]+", " ", readable_name)
+    readable_name = re.sub(r"\s+", " ", readable_name).strip()
+    if "american express" in readable_name.lower():
+        subject_label = "Amex"
+    elif "discover" in readable_name.lower():
+        subject_label = "Discover"
+    elif "prime" in readable_name.lower():
+        subject_label = "Prime"
+    else:
+        subject_label = readable_name.title() if readable_name else "This document"
+
+    focus_label = _extract_focus_phrase(compare_focus_query) or compare_focus_query.strip()
+    focus_label = focus_label.strip(" .,:;?") or "that field"
+
+    if field_value:
+        return (
+            f"{subject_label} {focus_label} is {field_value}.\n\n"
+            "Cross-document comparison is not available in Document Workspace. "
+            "Switch to Global Chat to compare documents."
+        )
+
+    return (
+        f"Cross-document comparison is not available in Document Workspace. "
+        f"I couldn't find a direct answer for {focus_label} in {subject_label}. "
+        "Switch to Global Chat to compare documents."
+    )
+
+
+def _compact_field_answer_value(value: str) -> str:
+    compact = re.sub(r"\s+", " ", str(value or "")).strip()
+    if not compact:
+        return ""
+
+    sentence_match = re.match(r"(.+?[.!?])(?:\s|$)", compact)
+    if sentence_match:
+        compact = sentence_match.group(1).strip()
+
+    compact = compact.rstrip(".!?").strip()
+    if not compact:
+        return ""
+
+    if compact.lower() in {"none", "no ne"}:
+        return "none"
+
+    if compact[:1].isalpha():
+        compact = compact[:1].lower() + compact[1:]
+
+    return compact
+
+
+def _build_bounded_field_direct_answer(
+    *,
+    query: str,
+    field_value: str,
+) -> str:
+    focus_label = _extract_focus_phrase(query) or query.strip().lower()
+    focus_label = focus_label.strip(" .,:;?")
+    focus_label = re.sub(r"^(?:the|a|an)\s+", "", focus_label, flags=re.I)
+
+    compact_value = _compact_field_answer_value(field_value)
+    if not compact_value or not focus_label:
+        return field_value
+
+    if compact_value == "none":
+        return f"There is no {focus_label}."
+
+    return f"The {focus_label} is {compact_value}."
+
+
 # =====================================================
 # Main Query Endpoint
 # =====================================================
@@ -1327,7 +1608,25 @@ def query_docs(payload: QueryRequest, request: Request):
     tenant_id = request.state.tenant_id
     conversation_id = payload.conversation_id
     selected_source = str(payload.selected_source or "").strip()
+    workspace_scope = str(payload.workspace_scope or "global").strip().lower() or "global"
+    if workspace_scope not in {"global", "document"}:
+        workspace_scope = "global"
+
+    is_document_workspace = workspace_scope == "document"
     explicit_compare_query = _is_explicit_compare_query(original_query)
+
+    if is_document_workspace and not selected_source:
+        raise HTTPException(
+            status_code=400,
+            detail="Document workspace queries require a selected source.",
+        )
+
+    def scoped_artifacts(base_artifacts: dict[str, Any]) -> dict[str, Any]:
+        return _merge_scope_artifacts(
+            base_artifacts,
+            selected_source=selected_source or None,
+            workspace_scope=workspace_scope,
+        )
 
     # ---------------- reset ----------------
     if is_reset_query(original_query):
@@ -1339,7 +1638,7 @@ def query_docs(payload: QueryRequest, request: Request):
                 mode="hard_refusal",
                 answer=refusal_message("reset"),
                 citations=[],
-                artifacts={"reason": "reset"},
+                artifacts=scoped_artifacts({"reason": "reset"}),
                 debug={"reset": True} if payload.debug else None,
             )
         )
@@ -1363,7 +1662,7 @@ def query_docs(payload: QueryRequest, request: Request):
                 mode="hard_refusal",
                 answer=refusal_message("no_chunks"),
                 citations=[],
-                artifacts={"reason": "vague_query"},
+                artifacts=scoped_artifacts({"reason": "vague_query"}),
                 debug={"reason": "vague_query"} if payload.debug else None,
             )
         )
@@ -1377,18 +1676,24 @@ def query_docs(payload: QueryRequest, request: Request):
                 mode="hard_refusal",
                 answer=refusal_message("external_entity"),
                 citations=[],
-                artifacts={"reason": "external_entity"},
+                artifacts=scoped_artifacts({"reason": "external_entity"}),
                 debug={"reason": "external_entity"} if payload.debug else None,
             )
         )
 
     # ---------------- retrieval ----------------
-    raw_results, status = retrieve(
-        rewritten_query, k=15, tenant_id=tenant_id, return_status=True
-    )
-    raw_distance_results = dedupe_results(raw_results)
+    if explicit_compare_query and is_document_workspace:
+        compare_focus_query = _document_workspace_compare_focus_query(original_query)
+        retrieval_query = compare_focus_query or original_query
+        raw_results, status = retrieve(
+            retrieval_query,
+            k=15,
+            tenant_id=tenant_id,
+            return_status=True,
+            source_filter=selected_source,
+        )
+        raw_distance_results = dedupe_results(raw_results)
 
-    if explicit_compare_query:
         if status == "no_documents_ingested":
             return persist_and_return(
                 wrap_response(
@@ -1398,7 +1703,81 @@ def query_docs(payload: QueryRequest, request: Request):
                     mode="hard_refusal",
                     answer="There are no documents available yet to answer this question.",
                     citations=[],
-                    artifacts={"reason": "no_documents_ingested"},
+                    artifacts=scoped_artifacts({"reason": "no_documents_ingested"}),
+                    debug={"status": status} if payload.debug else None,
+                )
+            )
+
+        compare_results = _rerank_results(compare_focus_query, raw_distance_results)
+        selected_field_value, selected_field_result = _select_best_field_value_result(
+            compare_focus_query,
+            compare_results,
+        )
+        if selected_field_value is None:
+            selected_field_value, selected_field_result = _scan_source_document_for_field_value(
+                source=selected_source,
+                query=compare_focus_query,
+            )
+        in_distance_results = [
+            (doc, score)
+            for doc, score in compare_results
+            if score <= MAX_DISTANCE
+        ]
+        strong_evidence_results = [
+            (doc, score)
+            for doc, score in in_distance_results
+            if _has_strong_answer_evidence(compare_focus_query, doc.page_content or "")
+        ]
+        if selected_field_result is not None:
+            strong_evidence_results = [selected_field_result]
+        evidence_results = (strong_evidence_results or in_distance_results or compare_results)[:3]
+        citations = build_citations(evidence_results, compare_focus_query) if evidence_results else []
+
+        return persist_and_return(
+            wrap_response(
+                tenant_id=tenant_id,
+                conversation_id=conversation_id,
+                query=original_query,
+                mode="guided_fallback",
+                answer=_build_document_workspace_compare_answer(
+                    source=selected_source,
+                    compare_focus_query=compare_focus_query,
+                    field_value=selected_field_value,
+                ),
+                citations=citations,
+                artifacts=scoped_artifacts(
+                    {
+                        "reason": "document_workspace_compare_requires_global_chat",
+                        "compare_field": _extract_focus_phrase(compare_focus_query) or compare_focus_query,
+                    }
+                ),
+                debug={
+                    "rewritten_query": rewritten_query,
+                    "compare_focus_query": compare_focus_query,
+                    "results_count": len(compare_results),
+                    "selected_document_answer_found": bool(selected_field_value),
+                }
+                if payload.debug
+                else None,
+            )
+        )
+
+    if explicit_compare_query and not is_document_workspace:
+        raw_results, status = retrieve(
+            rewritten_query, k=15, tenant_id=tenant_id, return_status=True
+        )
+        raw_distance_results = dedupe_results(raw_results)
+
+        if status == "no_documents_ingested":
+            return persist_and_return(
+                wrap_response(
+                    tenant_id=tenant_id,
+                    conversation_id=conversation_id,
+                    query=original_query,
+                    mode="hard_refusal",
+                    answer="There are no documents available yet to answer this question.",
+                    citations=[],
+                    artifacts=scoped_artifacts({"reason": "no_documents_ingested"}),
                     debug={"status": status} if payload.debug else None,
                 )
             )
@@ -1426,7 +1805,7 @@ def query_docs(payload: QueryRequest, request: Request):
                     mode="guided_fallback",
                     answer="I can compare one field across two documents, but I need the two document names spelled out explicitly. Tell me which two documents to compare.",
                     citations=ambiguity_citations,
-                    artifacts={"reason": "compare_documents_needed"},
+                    artifacts=scoped_artifacts({"reason": "compare_documents_needed"}),
                     debug={
                         "rewritten_query": rewritten_query,
                         "compare_focus_query": compare_focus_query,
@@ -1459,11 +1838,13 @@ def query_docs(payload: QueryRequest, request: Request):
                 mode="direct_answer",
                 answer=_build_compare_answer(compare_results),
                 citations=compare_citations,
-                artifacts={
-                    "reason": "compare_result",
-                    "compare_field": compare_focus_phrase,
-                    "compare_results": compare_results,
-                },
+                artifacts=scoped_artifacts(
+                    {
+                        "reason": "compare_result",
+                        "compare_field": compare_focus_phrase,
+                        "compare_results": compare_results,
+                    }
+                ),
                 debug={
                     "rewritten_query": rewritten_query,
                     "compare_focus_query": compare_focus_query,
@@ -1478,10 +1859,19 @@ def query_docs(payload: QueryRequest, request: Request):
             )
         )
 
+    raw_results, status = retrieve(
+        rewritten_query,
+        k=15,
+        tenant_id=tenant_id,
+        return_status=True,
+        source_filter=selected_source if is_document_workspace else None,
+    )
+    raw_distance_results = dedupe_results(raw_results)
+
     selection_query = original_query
-    if selected_source:
+    if selected_source and not is_document_workspace:
         raw_distance_results = _filter_results_to_source(raw_distance_results, selected_source)
-    else:
+    elif not is_document_workspace:
         explicit_source_docs = {
             str(doc.metadata.get("source") or ""): doc
             for doc, _score in raw_distance_results
@@ -1495,13 +1885,15 @@ def query_docs(payload: QueryRequest, request: Request):
     selected_field_value = None
     selected_field_result = None
     if selected_source and _wants_bounded_answer(selection_query):
-        focus_phrase = _extract_focus_phrase(selection_query)
-        for doc, score in results:
-            field_value = _extract_field_value(doc.page_content or "", focus_phrase)
-            if field_value:
-                selected_field_value = field_value
-                selected_field_result = (doc, score)
-                break
+        selected_field_value, selected_field_result = _select_best_field_value_result(
+            selection_query,
+            results,
+        )
+        if selected_field_value is None:
+            selected_field_value, selected_field_result = _scan_source_document_for_field_value(
+                source=selected_source,
+                query=selection_query,
+            )
     in_distance_keys = {
         (
             doc.page_content.strip(),
@@ -1538,21 +1930,26 @@ def query_docs(payload: QueryRequest, request: Request):
                 mode="hard_refusal",
                 answer="There are no documents available yet to answer this question.",
                 citations=[],
-                artifacts={"reason": "no_documents_ingested"},
+                artifacts=scoped_artifacts({"reason": "no_documents_ingested"}),
                 debug={"status": status} if payload.debug else None,
             )
         )
 
     if not evidence_results:
+        no_chunks_answer = (
+            "The selected document does not answer this question."
+            if is_document_workspace
+            else refusal_message("no_chunks")
+        )
         return persist_and_return(
             wrap_response(
                 tenant_id=tenant_id,
                 conversation_id=conversation_id,
                 query=original_query,
                 mode="hard_refusal",
-                answer=refusal_message("no_chunks"),
+                answer=no_chunks_answer,
                 citations=[],
-                artifacts={"reason": "no_chunks"},
+                artifacts=scoped_artifacts({"reason": "no_chunks"}),
                 debug={
                     "status": status,
                     "rewritten_query": rewritten_query,
@@ -1589,11 +1986,13 @@ def query_docs(payload: QueryRequest, request: Request):
                 mode="guided_fallback",
                 answer="I found this information in multiple documents. Choose a document or ask me to compare them.",
                 citations=ambiguity_citations,
-                artifacts={
-                    "reason": "multiple_documents_match",
-                    "matched_documents": matched_documents,
-                    "matched_document_options": matched_document_options,
-                },
+                artifacts=scoped_artifacts(
+                    {
+                        "reason": "multiple_documents_match",
+                        "matched_documents": matched_documents,
+                        "matched_document_options": matched_document_options,
+                    }
+                ),
                 debug={
                     "rewritten_query": rewritten_query,
                     "best_score": best_score,
@@ -1614,18 +2013,25 @@ def query_docs(payload: QueryRequest, request: Request):
     if is_explanatory_query(original_query) or (
         best_score > MAX_DISTANCE and not has_strong_evidence
     ):
+        fallback_answer = (
+            "No direct answer was found verbatim in the selected document. Try asking more specifically, or use keywords from that document."
+            if is_document_workspace
+            else "No direct answer was found verbatim in the documents. Try asking more specifically, or use keywords from the document."
+        )
         return persist_and_return(
             wrap_response(
                 tenant_id=tenant_id,
                 conversation_id=conversation_id,
                 query=original_query,
                 mode="guided_fallback",
-                answer="No direct answer was found verbatim in the documents. Try asking more specifically, or use keywords from the document.",
+                answer=fallback_answer,
                 citations=citations,
-                artifacts={
-                    "reason": "No direct answer was found in the documents for this question.",
-                    "best_score": best_score,
-                },
+                artifacts=scoped_artifacts(
+                    {
+                        "reason": "No direct answer was found in the documents for this question.",
+                        "best_score": best_score,
+                    }
+                ),
                 debug={
                     "rewritten_query": rewritten_query,
                     "best_score": best_score,
@@ -1647,7 +2053,14 @@ def query_docs(payload: QueryRequest, request: Request):
         for doc, _score in evidence_results
     ]
 
-    answer = selected_field_value
+    answer = (
+        _build_bounded_field_direct_answer(
+            query=selection_query,
+            field_value=selected_field_value,
+        )
+        if selected_field_value
+        else None
+    )
 
     if not answer:
         answer = generate_answer(original_query, contexts)
@@ -1660,7 +2073,9 @@ def query_docs(payload: QueryRequest, request: Request):
             mode="direct_answer",
             answer=answer,
             citations=citations,
-            artifacts={"additional_resources": [], "best_score": best_score},
+            artifacts=scoped_artifacts(
+                {"additional_resources": [], "best_score": best_score}
+            ),
             debug={
                 "rewritten_query": rewritten_query,
                 "best_score": best_score,

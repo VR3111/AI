@@ -388,6 +388,7 @@ export const api = {
         query,
         conversation_id: convId,
         selected_source: options?.selectedSource,
+        workspace_scope: options?.workspaceScope ?? "global",
         debug: false,
       }),
     });
@@ -410,6 +411,17 @@ export const api = {
       last_activity_at: conv.last_activity_at,
       title: conv.title,
       turns: [],
+      scope:
+        conv.selected_source
+          ? {
+              source: conv.selected_source,
+              label:
+                conv.selected_source_display_name ||
+                conv.selected_source.split("/").pop() ||
+                conv.selected_source,
+              mode: conv.workspace_scope === "document" ? "document" : "global",
+            }
+          : null,
     }));
   },
 
@@ -465,6 +477,7 @@ export const api = {
 
     return response.documents.map((doc) => ({
       filename: doc.filename,
+      source: doc.source,
       uploaded_at: doc.uploaded_at,
       size_bytes: doc.size_bytes,
       indexed: true,
