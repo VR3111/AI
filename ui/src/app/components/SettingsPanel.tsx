@@ -31,13 +31,13 @@ interface ToggleSwitchProps {
 function ToggleSwitch({ id, enabled, onChange, label, description, confirmationText }: ToggleSwitchProps) {
   return (
     <div className="group">
-      <div className="flex items-center justify-between">
+      <div className="flex min-h-12 items-start justify-between gap-4">
         <div className="flex-1 min-w-0">
-          <label htmlFor={id} className="text-sm text-foreground/90 cursor-pointer block">
+          <label htmlFor={id} className="block cursor-pointer text-sm text-foreground/90">
             {label}
           </label>
           {description && (
-            <p className="text-xs text-muted-foreground/70 mt-0.5">{description}</p>
+            <p className="mt-0.5 text-xs leading-5 text-muted-foreground/70">{description}</p>
           )}
         </div>
         <button
@@ -45,13 +45,13 @@ function ToggleSwitch({ id, enabled, onChange, label, description, confirmationT
           role="switch"
           aria-checked={enabled}
           onClick={() => onChange(!enabled)}
-          className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-all duration-200 ease-out focus:outline-none focus:ring-2 focus:ring-primary/50 focus:ring-offset-2 focus:ring-offset-card ${
+          className={`relative inline-flex h-7 w-12 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-all duration-200 ease-out focus:outline-none focus:ring-2 focus:ring-primary/50 focus:ring-offset-2 focus:ring-offset-card ${
             enabled ? 'bg-primary' : 'bg-secondary/50'
           }`}
         >
           <span
-            className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition-all duration-200 ease-out ${
-              enabled ? 'translate-x-5' : 'translate-x-0'
+            className={`pointer-events-none inline-block h-[22px] w-[22px] transform rounded-full bg-white shadow-lg ring-0 transition-all duration-200 ease-out ${
+              enabled ? 'translate-x-5' : 'translate-x-0.5'
             }`}
           >
             {/* Glossy highlight */}
@@ -123,17 +123,17 @@ export function SettingsPanel({
       {/* Settings Panel */}
       <div
         ref={panelRef}
-        className="fixed inset-y-0 right-0 w-full sm:w-[90vw] md:w-[500px] lg:w-[560px] bg-card border-l border-border/50 z-50 flex flex-col animate-in slide-in-from-right duration-200 shadow-2xl"
+        className="fixed inset-y-0 right-0 z-50 flex w-full flex-col bg-card shadow-2xl animate-in slide-in-from-right duration-200 border-l border-border/50 sm:w-[90vw] md:w-[500px] lg:w-[560px]"
       >
         {/* Header */}
-        <div className="p-5 lg:p-6 border-b border-border/50 bg-card/50 backdrop-blur-sm flex items-center justify-between">
+        <div className="sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-border/50 bg-card/95 px-4 pt-[calc(env(safe-area-inset-top)+0.875rem)] pb-3.5 backdrop-blur-xl lg:px-6 lg:py-6">
           <div>
-            <h2 className="text-lg lg:text-xl mb-1">Settings</h2>
-            <p className="text-xs text-muted-foreground">Customize your experience</p>
+            <h2 className="mb-0.5 text-base lg:mb-1 lg:text-xl">Settings</h2>
+            <p className="text-[11px] leading-5 text-muted-foreground lg:text-xs">Customize your experience</p>
           </div>
           <button
             onClick={onClose}
-            className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-secondary/50 transition-all duration-150 group"
+            className="flex h-10 w-10 items-center justify-center rounded-xl border border-border/40 bg-secondary/30 hover:bg-secondary/50 transition-all duration-150 group"
             aria-label="Close settings"
           >
             <svg className="w-5 h-5 text-muted-foreground group-hover:text-foreground transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -143,13 +143,13 @@ export function SettingsPanel({
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-5 lg:p-6 space-y-8">
+        <div className="flex-1 overflow-y-auto px-4 py-4 pb-28 lg:px-6 lg:py-6 lg:pb-24 space-y-6 lg:space-y-8">
           {/* Appearance Section */}
           <section>
-            <div className="mb-4">
-              <h3 className="text-sm uppercase tracking-wider text-muted-foreground/70">Appearance</h3>
+            <div className="mb-3">
+              <h3 className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground/70 lg:text-sm lg:tracking-wider">Appearance</h3>
             </div>
-            <div className="space-y-5 bg-card/30 backdrop-blur-sm rounded-xl p-4 border border-border/30 relative">
+            <div className="space-y-4 rounded-xl border border-border/30 bg-card/30 p-3.5 backdrop-blur-sm relative lg:space-y-5 lg:p-4">
               <div className="absolute inset-0 bg-gradient-to-b from-white/[0.02] to-transparent rounded-xl pointer-events-none" />
               <div className="relative">
                 <ToggleSwitch
@@ -177,10 +177,10 @@ export function SettingsPanel({
 
           {/* Interaction Section */}
           <section>
-            <div className="mb-4">
-              <h3 className="text-sm uppercase tracking-wider text-muted-foreground/70">Interaction</h3>
+            <div className="mb-3">
+              <h3 className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground/70 lg:text-sm lg:tracking-wider">Interaction</h3>
             </div>
-            <div className="space-y-5 bg-card/30 backdrop-blur-sm rounded-xl p-4 border border-border/30 relative">
+            <div className="space-y-4 rounded-xl border border-border/30 bg-card/30 p-3.5 backdrop-blur-sm relative lg:space-y-5 lg:p-4">
               <div className="absolute inset-0 bg-gradient-to-b from-white/[0.02] to-transparent rounded-xl pointer-events-none" />
               <div className="relative">
                 <ToggleSwitch
@@ -208,10 +208,10 @@ export function SettingsPanel({
 
           {/* Documents Section */}
           <section>
-            <div className="mb-4">
-              <h3 className="text-sm uppercase tracking-wider text-muted-foreground/70">Documents</h3>
+            <div className="mb-3">
+              <h3 className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground/70 lg:text-sm lg:tracking-wider">Documents</h3>
             </div>
-            <div className="space-y-5 bg-card/30 backdrop-blur-sm rounded-xl p-4 border border-border/30 relative">
+            <div className="space-y-4 rounded-xl border border-border/30 bg-card/30 p-3.5 backdrop-blur-sm relative lg:space-y-5 lg:p-4">
               <div className="absolute inset-0 bg-gradient-to-b from-white/[0.02] to-transparent rounded-xl pointer-events-none" />
               <div className="relative">
                 <ToggleSwitch
@@ -239,10 +239,10 @@ export function SettingsPanel({
 
           {/* Privacy & Security Section */}
           <section>
-            <div className="mb-4">
-              <h3 className="text-sm uppercase tracking-wider text-muted-foreground/70">Privacy &amp; Security</h3>
+            <div className="mb-3">
+              <h3 className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground/70 lg:text-sm lg:tracking-wider">Privacy &amp; Security</h3>
             </div>
-            <div className="space-y-5 bg-card/30 backdrop-blur-sm rounded-xl p-4 border border-border/30 relative">
+            <div className="space-y-4 rounded-xl border border-border/30 bg-card/30 p-3.5 backdrop-blur-sm relative lg:space-y-5 lg:p-4">
               <div className="absolute inset-0 bg-gradient-to-b from-white/[0.02] to-transparent rounded-xl pointer-events-none" />
               <div className="relative">
                 <ToggleSwitch
@@ -258,17 +258,17 @@ export function SettingsPanel({
                 <>
                   <div className="h-px bg-border/30" />
                   <div className="relative">
-                    <div className="flex items-center justify-between gap-4">
+                    <div className="flex items-start justify-between gap-4">
                       <div className="flex-1 min-w-0">
                         <p className="text-sm text-foreground/90">Delete Account</p>
-                        <p className="text-xs text-muted-foreground/70 mt-0.5">
+                        <p className="mt-0.5 text-xs leading-5 text-muted-foreground/70">
                           Permanently remove your account and tenant data.
                         </p>
                       </div>
                       <button
                         type="button"
                         onClick={onDeleteAccount}
-                        className="px-3 py-2 rounded-lg border border-destructive/30 text-destructive hover:bg-destructive/10 transition-colors"
+                        className="min-h-10 rounded-lg border border-destructive/30 px-3 py-2 text-sm text-destructive hover:bg-destructive/10 transition-colors"
                       >
                         Delete
                       </button>
@@ -281,8 +281,8 @@ export function SettingsPanel({
         </div>
 
         {/* Footer */}
-        <div className="p-5 lg:p-6 border-t border-border/50 bg-card/50 backdrop-blur-sm">
-          <div className="flex items-center justify-between text-xs text-muted-foreground/70">
+        <div className="sticky bottom-0 border-t border-border/50 bg-card/95 px-4 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.875rem)] backdrop-blur-xl lg:px-6 lg:py-6">
+          <div className="flex items-center justify-between text-[11px] text-muted-foreground/70 lg:text-xs">
             <span>Changes are saved automatically</span>
             <span className="hidden sm:inline">P1 v1.0</span>
           </div>

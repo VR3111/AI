@@ -1,6 +1,5 @@
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { Document, Conversation } from "../types/api";
-import { UserProfilePopup } from "./UserProfilePopup";
 import { LeftSidebar } from "./LeftSidebar";
 
 interface MobileDrawerProps {
@@ -50,15 +49,7 @@ export function MobileDrawer({
   showDocumentBadges = true,
   confirmBeforeDelete = true,
 }: MobileDrawerProps) {
-  const [documentsExpanded, setDocumentsExpanded] = useState(true);
-  const [conversationsExpanded, setConversationsExpanded] = useState(true);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [isSearching, setIsSearching] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
-  const [isProfileOpen, setIsProfileOpen] = useState(false);
   const drawerRef = useRef<HTMLDivElement>(null);
-
-  const MAX_ITEMS_PREVIEW = 5;
 
   useEffect(() => {
     if (isOpen) {
@@ -69,112 +60,6 @@ export function MobileDrawer({
       document.body.style.overflow = "unset";
     };
   }, [isOpen]);
-
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setIsUploading(true);
-      await onUploadDocument(file);
-      setIsUploading(false);
-      e.target.value = "";
-    }
-  };
-
-  const formatDate = (dateString: string): string => {
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
-
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays === 1) return "Yesterday";
-    if (diffDays < 7) return `${diffDays}d ago`;
-    return new Intl.DateTimeFormat("en-US", {
-      month: "short",
-      day: "numeric",
-    }).format(date);
-  };
-
-  const formatBytes = (bytes: number): string => {
-    if (bytes === 0) return "0 B";
-    const k = 1024;
-    const sizes = ["B", "KB", "MB", "GB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
-  };
-
-  const getResponseModeColor = (mode: string): string => {
-    switch (mode) {
-      case "direct_answer":
-        return "text-emerald-400";
-      case "guided_fallback":
-        return "text-amber-400";
-      case "hard_refusal":
-        return "text-zinc-400";
-      default:
-        return "text-muted-foreground";
-    }
-  };
-
-  const getResponseModeIcon = (mode: string) => {
-    switch (mode) {
-      case "direct_answer":
-        return (
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2.5}
-            d="M5 13l4 4L19 7"
-          />
-        );
-      case "guided_fallback":
-        return (
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2.5}
-            d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-          />
-        );
-      case "hard_refusal":
-        return (
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2.5}
-            d="M6 18L18 6M6 6l12 12"
-          />
-        );
-      default:
-        return null;
-    }
-  };
-
-  // ✅ FIX: guard against undefined turns
-  const filteredConversations = conversations.filter((conv) =>
-    (conv.turns ?? []).some((turn) =>
-      turn.query.toLowerCase().includes(searchQuery.toLowerCase())
-    )
-  );
-
-  const displayedDocuments = documents.slice(0, MAX_ITEMS_PREVIEW);
-  const displayedConversations = filteredConversations.slice(
-    0,
-    MAX_ITEMS_PREVIEW
-  );
-
-  const handleConversationSelect = (conversationId: string) => {
-    onSelectConversation(conversationId);
-    onClose();
-  };
-
-  const handleNewConversationClick = () => {
-    onNewConversation();
-    onClose();
-  };
 
   if (!isOpen) return null;
 
@@ -189,7 +74,10 @@ export function MobileDrawer({
       {/* Drawer */}
       <div
         ref={drawerRef}
-        className="absolute left-0 top-0 h-full w-[81%] max-w-sm bg-background"
+        className="absolute left-0 top-0 h-full w-[88%] max-w-[24rem] overflow-hidden rounded-r-3xl border-r border-border/50 bg-card shadow-[0_24px_80px_-28px_rgba(0,0,0,0.9)]"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Navigation drawer"
       >
         <LeftSidebar
           conversations={conversations}
@@ -237,6 +125,7 @@ export function MobileDrawer({
           onToggleCollapse={onClose}
           showDocumentBadges={showDocumentBadges}
           confirmBeforeDelete={confirmBeforeDelete}
+          mobileMode
         />
       </div>
     </div>

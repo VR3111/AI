@@ -22,21 +22,21 @@ export function AuthDialog({ isOpen, onClose }: AuthDialogProps) {
   }
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 px-6 backdrop-blur-sm">
-      <div className="max-w-md w-full bg-card rounded-2xl p-8 shadow-xl border border-border/50 relative">
+    <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/50 px-3.5 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] backdrop-blur-sm sm:items-center sm:px-6 sm:pb-0">
+      <div className="relative w-full max-w-md rounded-2xl border border-border/50 bg-card px-4 pt-4 pb-4 shadow-xl sm:p-8">
         <button
           type="button"
           onClick={onClose}
-          className="absolute right-4 top-4 text-muted-foreground hover:text-foreground"
+          className="absolute right-3 top-3 flex h-10 w-10 items-center justify-center rounded-xl text-muted-foreground hover:bg-secondary/50 hover:text-foreground sm:right-4 sm:top-4 sm:h-auto sm:w-auto sm:rounded-none"
           aria-label="Close sign in dialog"
         >
           ×
         </button>
 
-        <div className="mb-8 text-center">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-primary/20 to-primary/5 rounded-2xl mb-4 backdrop-blur-sm">
+        <div className="mb-6 text-center sm:mb-8">
+          <div className="mb-3 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 backdrop-blur-sm sm:mb-4 sm:h-16 sm:w-16">
             <svg
-              className="w-8 h-8 text-primary"
+              className="h-7 w-7 text-primary sm:h-8 sm:w-8"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -52,7 +52,7 @@ export function AuthDialog({ isOpen, onClose }: AuthDialogProps) {
           <h2 className="mb-2">
             {mode === "sign-in" ? "Sign in to P1" : "Create your P1 account"}
           </h2>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-[13px] leading-5 text-muted-foreground sm:text-sm">
             Upgrade your guest workspace to a real account.
           </p>
         </div>
@@ -174,7 +174,7 @@ export function AuthDialog({ isOpen, onClose }: AuthDialogProps) {
           </button>
         </div>
 
-        <div className="relative my-6">
+        <div className="relative my-5 sm:my-6">
           <div className="absolute inset-0 flex items-center">
             <span className="w-full border-t border-border/50" />
           </div>

@@ -215,14 +215,14 @@ function SupportCenterBody({
     <div className="flex min-h-0 flex-1 flex-col">
       <div
         ref={scrollContainerRef}
-        className="flex-1 overflow-y-auto px-4 pb-4 sm:px-6 sm:pb-6 lg:px-8 lg:pb-8"
+        className="flex-1 overflow-y-auto px-3.5 pb-[calc(env(safe-area-inset-bottom)+1rem)] sm:px-6 sm:pb-6 lg:px-8 lg:pb-8"
       >
         <div className={isMobile ? "space-y-4 sm:space-y-5" : "space-y-6"}>
           <div
             data-support-nav
             className={
               isMobile
-                ? "rounded-xl border border-border/40 bg-card/60 p-2.5"
+                ? "sticky top-0 z-10 -mx-1 rounded-xl border border-border/40 bg-background/92 p-2 backdrop-blur-xl"
                 : "sticky top-0 z-10 rounded-2xl border border-border/40 bg-background/85 px-3 py-3 backdrop-blur-xl"
             }
           >
@@ -406,7 +406,7 @@ function SupportCenterBody({
                     type="button"
                     variant={contactType === "issue" ? "default" : "outline"}
                     onClick={() => onContactTypeChange("issue")}
-                    className="h-11 justify-center px-4 text-center"
+                    className="h-11 justify-center px-4 text-center text-sm"
                   >
                     Report an Issue
                   </Button>
@@ -414,7 +414,7 @@ function SupportCenterBody({
                     type="button"
                     variant={contactType === "feature" ? "default" : "outline"}
                     onClick={() => onContactTypeChange("feature")}
-                    className="h-11 justify-center px-4 text-center"
+                    className="h-11 justify-center px-4 text-center text-sm"
                   >
                     Feature Request
                   </Button>
@@ -422,7 +422,7 @@ function SupportCenterBody({
                     type="button"
                     variant={contactType === "contact" ? "default" : "outline"}
                     onClick={() => onContactTypeChange("contact")}
-                    className="h-11 justify-center px-4 text-center"
+                    className="h-11 justify-center px-4 text-center text-sm"
                   >
                     General Contact
                   </Button>
@@ -523,7 +523,7 @@ function SupportCenterBody({
                 <div
                   className={
                     isMobile
-                      ? "flex flex-col gap-2"
+                      ? "sticky bottom-0 -mx-1 flex flex-col gap-2 rounded-xl border border-border/40 bg-background/92 p-3 backdrop-blur-xl"
                       : "rounded-2xl border border-border/40 bg-background/40 px-5 py-4"
                   }
                 >
@@ -766,11 +766,11 @@ export function SupportCenter({
     return (
       <Drawer open={isOpen} onOpenChange={handleOpenChange}>
         <DrawerContent className="max-h-[94vh] rounded-t-2xl">
-          <DrawerHeader className="border-b border-border/50 px-4 pb-4">
+          <DrawerHeader className="border-b border-border/50 px-4 pt-3 pb-3.5">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <DrawerTitle>Support Center</DrawerTitle>
-                <DrawerDescription>
+                <DrawerTitle className="text-base">Support Center</DrawerTitle>
+                <DrawerDescription className="mt-0.5 text-[11px] leading-5">
                   Product guidance, behavior details, and support intake in one
                   place.
                 </DrawerDescription>

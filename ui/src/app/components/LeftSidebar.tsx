@@ -27,6 +27,7 @@ interface LeftSidebarProps {
   showDocumentBadges?: boolean;
   confirmBeforeDelete?: boolean;
   compactView?: boolean;
+  mobileMode?: boolean;
 }
 
 export function LeftSidebar({
@@ -52,6 +53,7 @@ export function LeftSidebar({
   showDocumentBadges = true,
   confirmBeforeDelete = true,
   compactView = false,
+  mobileMode = false,
 }: LeftSidebarProps) {
   const [documentsExpanded, setDocumentsExpanded] = useState(true);
   const [conversationsExpanded, setConversationsExpanded] = useState(true);
@@ -220,17 +222,23 @@ export function LeftSidebar({
   }
 
   return (
-    <div className="h-full w-80 flex flex-col bg-card border-r border-border/50">
+    <div className={`h-full flex flex-col bg-card ${mobileMode ? "w-full border-r-0" : "w-80 border-r border-border/50"}`}>
       {/* Collapse Toggle */}
-      <div className="px-4 pt-4 pb-2 flex items-center justify-between">
-        <div className="text-xs uppercase tracking-wider text-muted-foreground/70">
+      <div
+        className={`sticky top-0 z-20 flex items-center justify-between border-b border-border/30 bg-card/95 backdrop-blur-xl ${
+          mobileMode
+            ? "px-3.5 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-3"
+            : "px-4 pt-4 pb-2"
+        }`}
+      >
+        <div className={`${mobileMode ? "text-[11px]" : "text-xs"} uppercase tracking-wider text-muted-foreground/70`}>
           Navigation
         </div>
         {onToggleCollapse && (
           <button
             onClick={onToggleCollapse}
-            className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-secondary/50 transition-all duration-200 group"
-            aria-label="Collapse sidebar"
+            className={`${mobileMode ? "w-10 h-10 rounded-xl bg-secondary/40 border border-border/40" : "w-8 h-8 rounded-lg"} flex items-center justify-center hover:bg-secondary/50 transition-all duration-200 group`}
+            aria-label={mobileMode ? "Close navigation" : "Collapse sidebar"}
           >
             <svg
               className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-all duration-200 group-hover:-translate-x-0.5"
@@ -250,10 +258,10 @@ export function LeftSidebar({
       </div>
 
       {/* Primary Actions */}
-      <div className="px-4 pb-4 space-y-2 border-b border-border/30">
+      <div className={`${mobileMode ? "px-3.5 py-3.5" : "px-4 pb-4"} space-y-2.5 border-b border-border/30`}>
         <button
           onClick={onNewConversation}
-          className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-primary to-primary/90 text-primary-foreground rounded-xl hover:shadow-lg hover:shadow-primary/25 transition-all duration-200 active:scale-[0.98] group"
+          className={`w-full flex items-center justify-center gap-2 px-4 ${mobileMode ? "min-h-12 py-3.5 text-sm" : "py-3"} bg-gradient-to-r from-primary to-primary/90 text-primary-foreground rounded-xl hover:shadow-lg hover:shadow-primary/25 transition-all duration-200 active:scale-[0.98] group`}
         >
           <svg
             className="w-4 h-4 transition-transform duration-200 group-hover:rotate-90"
@@ -273,7 +281,7 @@ export function LeftSidebar({
 
         <button
           onClick={() => setIsSearching(!isSearching)}
-          className={`w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl transition-all duration-200 ${
+          className={`w-full flex items-center justify-center gap-2 px-4 ${mobileMode ? "min-h-11 py-3 text-sm" : "py-3"} rounded-xl transition-all duration-200 ${
             isSearching
               ? "bg-primary/10 text-primary border border-primary/30"
               : "bg-secondary/50 text-secondary-foreground border border-border/30 hover:bg-secondary/70 hover:border-border/50"
@@ -302,7 +310,7 @@ export function LeftSidebar({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Type to search..."
-              className="w-full px-3 py-2 bg-input-background border border-input rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50 transition-all duration-200 placeholder:text-muted-foreground/50"
+              className={`w-full bg-input-background border border-input rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50 transition-all duration-200 placeholder:text-muted-foreground/50 ${mobileMode ? "px-3.5 py-3 text-[15px]" : "px-3 py-2 text-sm"}`}
               autoFocus
             />
           </div>
@@ -310,7 +318,7 @@ export function LeftSidebar({
       </div>
 
       {/* Upload Document */}
-      <div className="px-4 pt-4 pb-3">
+      <div className={`${mobileMode ? "px-3.5 pt-3.5 pb-3" : "px-4 pt-4 pb-3"}`}>
         <label className="block group cursor-pointer">
           <input
             type="file"
@@ -319,7 +327,7 @@ export function LeftSidebar({
             accept=".pdf,.doc,.docx,.txt"
             disabled={isUploading}
           />
-          <div className="flex items-center justify-center gap-2 px-4 py-2.5 bg-secondary/50 hover:bg-secondary/70 text-foreground/90 rounded-lg border border-border/30 hover:border-border/50 transition-all duration-200 active:scale-[0.98]">
+          <div className={`flex items-center justify-center gap-2 px-4 ${mobileMode ? "min-h-12 py-3.5 rounded-xl" : "py-2.5 rounded-lg"} bg-secondary/50 hover:bg-secondary/70 text-foreground/90 border border-border/30 hover:border-border/50 transition-all duration-200 active:scale-[0.98]`}>
             <svg
               className="w-4 h-4 transition-transform duration-200 group-hover:-translate-y-0.5"
               fill="none"
@@ -333,7 +341,7 @@ export function LeftSidebar({
                 d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
               />
             </svg>
-            <span className="text-sm">
+            <span className={mobileMode ? "text-sm" : "text-sm"}>
               {isUploading ? "Uploading..." : "Upload Document"}
             </span>
           </div>
@@ -341,13 +349,13 @@ export function LeftSidebar({
       </div>
 
       {/* Scrollable Content Area */}
-      <div className="flex-1 overflow-y-auto min-h-0 pb-4">
+      <div className={`flex-1 overflow-y-auto min-h-0 ${mobileMode ? "pb-[calc(env(safe-area-inset-bottom)+1rem)]" : "pb-4"}`}>
         {/* Documents Section */}
         <div className="border-b border-border/30">
           <button
             onClick={() => setDocumentsExpanded(!documentsExpanded)}
-            className={`w-full flex items-center justify-between px-4 ${
-              compactView ? "py-2" : "py-3"
+            className={`w-full flex items-center justify-between ${mobileMode ? "px-3.5 py-3.5" : "px-4"} ${
+              compactView && !mobileMode ? "py-2" : !mobileMode ? "py-3" : ""
             } hover:bg-secondary/30 transition-all duration-200 group`}
           >
             <div className="flex items-center gap-2">
@@ -366,11 +374,11 @@ export function LeftSidebar({
                   d="M9 5l7 7-7 7"
                 />
               </svg>
-              <span className="text-sm uppercase tracking-wider text-muted-foreground group-hover:text-foreground transition-colors">
+              <span className={`${mobileMode ? "text-[13px]" : "text-sm"} uppercase tracking-wider text-muted-foreground group-hover:text-foreground transition-colors`}>
                 Documents
               </span>
             </div>
-            <span className="text-xs bg-secondary/50 px-2 py-0.5 rounded text-muted-foreground">
+            <span className={`${mobileMode ? "text-[11px] px-2.5 py-1 rounded-md" : "text-xs px-2 py-0.5 rounded"} bg-secondary/50 text-muted-foreground`}>
               {documents.length}
             </span>
           </button>
@@ -392,18 +400,18 @@ export function LeftSidebar({
                 </div>
               ) : (
                 <>
-                  <div className="px-2 space-y-1">
+                  <div className={`${mobileMode ? "px-2.5 space-y-2" : "px-2 space-y-1"}`}>
                     {displayedDocuments.map((doc) => (
                       <div
                         key={doc.filename}
-                        className={`group bg-secondary/20 hover:bg-secondary/40 rounded-lg border border-border/20 hover:border-border/40 transition-all duration-200 ${
-                          compactView ? "p-2" : "p-3"
+                        className={`group bg-secondary/20 hover:bg-secondary/40 rounded-xl border border-border/20 hover:border-border/40 transition-all duration-200 ${
+                          mobileMode ? "p-2.5" : compactView ? "p-2" : "p-3"
                         }`}
                       >
                         <button
                           type="button"
                           onClick={() => onOpenDocumentWorkspace(doc)}
-                          className="mb-2 flex w-full items-start gap-2 rounded-md text-left transition-colors hover:bg-background/30"
+                          className={`mb-2 flex w-full items-start gap-2.5 rounded-lg text-left transition-colors hover:bg-background/30 ${mobileMode ? "min-h-12 px-0.5 py-0.5" : ""}`}
                         >
                           <svg
                             className="w-4 h-4 text-primary flex-shrink-0 mt-0.5"
@@ -421,15 +429,15 @@ export function LeftSidebar({
 
                           <div className="flex-1 min-w-0">
                             <div className="flex items-start justify-between gap-2 mb-1">
-                              <div className="text-sm truncate text-foreground/90">
+                              <div className={`${mobileMode ? "text-[14px] leading-5" : "text-sm"} truncate text-foreground/90`}>
                                 {doc.filename}
                               </div>
-                              <span className="inline-flex shrink-0 items-center rounded-md border border-primary/20 bg-primary/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-primary">
+                              <span className={`inline-flex shrink-0 items-center rounded-md border border-primary/20 bg-primary/10 ${mobileMode ? "px-2 py-1 text-[10px]" : "px-2 py-0.5 text-[10px]"} uppercase tracking-wide text-primary`}>
                                 Workspace
                               </span>
                             </div>
 
-                            <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
+                            <div className={`flex items-center gap-1.5 text-muted-foreground mb-2 ${mobileMode ? "text-[11px]" : "text-xs"}`}>
                               <span>{formatBytes(doc.size_bytes)}</span>
                             </div>
 
@@ -441,7 +449,7 @@ export function LeftSidebar({
                               }`}
                             >
                               {doc.indexed ? (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-500/20 text-emerald-400 rounded text-[10px] border border-emerald-500/30 transition-all duration-200">
+                                <span className={`inline-flex items-center gap-1 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 transition-all duration-200 ${mobileMode ? "rounded-md px-2 py-1 text-[10px]" : "rounded px-2 py-0.5 text-[10px]"}`}>
                                   <svg
                                     className="w-2 h-2"
                                     fill="none"
@@ -458,7 +466,7 @@ export function LeftSidebar({
                                   Indexed
                                 </span>
                               ) : (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-zinc-500/20 text-zinc-400 rounded text-[10px] border border-zinc-500/30 transition-all duration-200">
+                                <span className={`inline-flex items-center gap-1 bg-zinc-500/20 text-zinc-400 border border-zinc-500/30 transition-all duration-200 ${mobileMode ? "rounded-md px-2 py-1 text-[10px]" : "rounded px-2 py-0.5 text-[10px]"}`}>
                                   <svg
                                     className="w-2 h-2"
                                     fill="none"
@@ -482,7 +490,7 @@ export function LeftSidebar({
                         {!doc.indexed && (
                           <button
                             onClick={() => onIndexDocument(doc.filename)}
-                            className="mb-1.5 w-full rounded-lg border border-primary/20 bg-primary/10 px-3 py-1.5 text-xs text-primary transition-all duration-200 hover:bg-primary/20 hover:border-primary/30"
+                            className={`mb-1.5 w-full rounded-lg border border-primary/20 bg-primary/10 px-3 ${mobileMode ? "py-2.5 text-[13px]" : "py-1.5 text-xs"} text-primary transition-all duration-200 hover:bg-primary/20 hover:border-primary/30`}
                           >
                             Trigger Indexing
                           </button>
@@ -490,7 +498,7 @@ export function LeftSidebar({
 
                         <button
                           onClick={() => onStartNewDocumentWorkspaceChat(doc)}
-                          className="mb-1.5 w-full rounded-lg border border-border/40 bg-card/60 px-3 py-1.5 text-xs text-foreground/85 transition-all duration-200 hover:border-primary/25 hover:bg-primary/5"
+                          className={`mb-1.5 w-full rounded-lg border border-border/40 bg-card/60 px-3 ${mobileMode ? "py-2.5 text-[13px]" : "py-1.5 text-xs"} text-foreground/85 transition-all duration-200 hover:border-primary/25 hover:bg-primary/5`}
                         >
                           New Chat
                         </button>
@@ -499,7 +507,7 @@ export function LeftSidebar({
                           onClick={() => {
                             onDeleteDocument(doc.filename);
                           }}
-                          className="w-full text-xs text-destructive/80 hover:text-destructive py-1.5 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-all duration-200 relative flex items-center justify-center gap-1"
+                          className={`w-full ${mobileMode ? "min-h-10 rounded-lg border border-destructive/20 bg-destructive/5 py-2.5 text-[13px]" : "py-1.5 text-xs"} text-destructive/80 hover:text-destructive opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-all duration-200 relative flex items-center justify-center gap-1`}
                         >
                           <svg
                             className={`w-3 h-3 transition-all duration-200 ${
@@ -563,8 +571,8 @@ export function LeftSidebar({
         <div>
           <button
             onClick={() => setConversationsExpanded(!conversationsExpanded)}
-            className={`w-full flex items-center justify-between px-4 ${
-              compactView ? "py-2" : "py-3"
+            className={`w-full flex items-center justify-between ${mobileMode ? "px-3.5 py-3.5" : "px-4"} ${
+              compactView && !mobileMode ? "py-2" : !mobileMode ? "py-3" : ""
             } hover:bg-secondary/30 transition-all duration-200 group`}
           >
             <div className="flex items-center gap-2">
@@ -583,13 +591,13 @@ export function LeftSidebar({
                   d="M9 5l7 7-7 7"
                 />
               </svg>
-              <span className="text-sm uppercase tracking-wider text-muted-foreground group-hover:text-foreground transition-colors">
+              <span className={`${mobileMode ? "text-[13px]" : "text-sm"} uppercase tracking-wider text-muted-foreground group-hover:text-foreground transition-colors`}>
                 Conversations
               </span>
             </div>
 
             {/* Shows count from backend list (not dependent on turns) */}
-            <span className="text-xs bg-secondary/50 px-2 py-0.5 rounded text-muted-foreground">
+            <span className={`${mobileMode ? "text-[11px] px-2.5 py-1 rounded-md" : "text-xs px-2 py-0.5 rounded"} bg-secondary/50 text-muted-foreground`}>
               {filteredConversations.length}
             </span>
           </button>
@@ -613,7 +621,7 @@ export function LeftSidebar({
                 </div>
               ) : (
                 <>
-                  <div className="px-2 space-y-1">
+                  <div className={`${mobileMode ? "px-2.5 space-y-2" : "px-2 space-y-1"}`}>
                     {displayedConversations.map((conversation) => {
                       const isSelected =
                         conversation.conversation_id === selectedConversationId;
@@ -646,18 +654,18 @@ export function LeftSidebar({
                       return (
                         <div
                           key={conversation.conversation_id}
-                          className={`group w-full rounded-lg transition-all duration-200 ${
+                          className={`group w-full rounded-xl transition-all duration-200 ${
                             isSelected
                               ? "bg-primary/10 border border-primary/30 shadow-lg shadow-primary/5"
                               : "bg-secondary/20 hover:bg-secondary/40 border border-border/20 hover:border-border/40"
                           }`}
                         >
-                          <div className={`flex items-start gap-2 ${compactView ? "p-2" : "p-3"}`}>
+                          <div className={`flex items-start gap-2.5 ${mobileMode ? "p-2.5" : compactView ? "p-2" : "p-3"}`}>
                             <button
                               onClick={() =>
                                 onSelectConversation(conversation.conversation_id)
                               }
-                              className="flex-1 min-w-0 text-left"
+                              className={`flex-1 min-w-0 text-left ${mobileMode ? "min-h-12" : ""}`}
                             >
                               <div className="flex items-start gap-2">
                                 {/* If we have a real first turn, show mode icon.
@@ -690,14 +698,17 @@ export function LeftSidebar({
                                   </svg>
                                 </div>
 
-                                <div className="flex-1 min-w-0 text-sm text-foreground/90 truncate whitespace-nowrap overflow-hidden">
+                                <div className={`flex-1 min-w-0 text-foreground/90 overflow-hidden ${mobileMode ? "text-[14px]" : "text-sm"}`}>
                                   <div className="truncate whitespace-nowrap overflow-hidden">
                                     {previewText}
+                                  </div>
+                                  <div className={`mt-1 text-muted-foreground ${mobileMode ? "text-[11px]" : "text-[10px]"}`}>
+                                    {formatDate(conversation.last_activity_at)}
                                   </div>
                                   {scope && (
                                     <div className="mt-1 flex items-center gap-1.5">
                                       <span
-                                        className={`inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] tracking-wide ${
+                                        className={`inline-flex items-center rounded-md border ${mobileMode ? "px-2 py-1 text-[10px]" : "px-1.5 py-0.5 text-[10px]"} tracking-wide ${
                                           scope.mode === "document"
                                             ? "border-primary/20 bg-primary/10 text-primary"
                                             : "border-amber-500/20 bg-amber-500/10 text-amber-400"
@@ -718,7 +729,7 @@ export function LeftSidebar({
                               onClick={() =>
                                 onDeleteConversation(conversation.conversation_id)
                               }
-                              className="mt-0.5 p-1.5 rounded-md text-destructive/80 hover:text-destructive hover:bg-destructive/10 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-all duration-200"
+                              className={`mt-0.5 ${mobileMode ? "h-10 w-10 rounded-lg border border-border/30 bg-card/60" : "p-1.5 rounded-md"} text-destructive/80 hover:text-destructive hover:bg-destructive/10 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-all duration-200 flex items-center justify-center`}
                               aria-label="Delete conversation"
                               title="Delete conversation"
                             >
@@ -781,14 +792,14 @@ export function LeftSidebar({
       </div>
 
       {/* Scroll/Profile Divider */}
-      <div className="h-[6px] bg-card border-t border-border/30" />
+      <div className={`bg-card border-t border-border/30 ${mobileMode ? "h-[1px]" : "h-[6px]"}`} />
 
       {/* User Profile Section (desktop behavior unchanged) */}
-      <div className="relative border-t border-border/30 p-3">
+      <div className={`relative border-t border-border/30 bg-card/95 backdrop-blur-xl ${mobileMode ? "px-3.5 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.875rem)]" : "p-3"}`}>
         <button
           onClick={() => setIsProfileOpen(!isProfileOpen)}
           data-profile-button
-          className="w-full flex items-center gap-3 p-2.5 rounded-lg hover:bg-secondary/50 transition-all duration-200 group relative overflow-hidden"
+          className={`w-full flex items-center gap-3 ${mobileMode ? "p-3 rounded-xl" : "p-2.5 rounded-lg"} hover:bg-secondary/50 transition-all duration-200 group relative overflow-hidden`}
         >
           <div className="absolute inset-0 bg-gradient-to-b from-white/[0.02] to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
 
