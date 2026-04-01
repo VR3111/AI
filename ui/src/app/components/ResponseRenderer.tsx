@@ -256,7 +256,7 @@ export function ResponseRenderer({
     return (
       <div className="mb-2.5 lg:mb-3.5">
         {response.artifacts?.compare_field && (
-          <div className="mb-2.5 text-[10px] lg:text-xs uppercase tracking-[0.18em] text-emerald-400/90">
+          <div className="mb-2 text-[10px] lg:mb-2.5 lg:text-xs uppercase tracking-[0.18em] text-emerald-400/90">
             Comparing {response.artifacts.compare_field}
           </div>
         )}
@@ -322,16 +322,16 @@ export function ResponseRenderer({
   if (response.mode === "direct_answer") {
     return (
       <div
-        className="relative bg-gradient-to-br from-emerald-500/10 via-emerald-500/5 to-transparent rounded-lg lg:rounded-2xl p-3.5 sm:p-4 lg:p-6 border border-emerald-500/20 shadow-lg backdrop-blur-sm group"
+        className="relative bg-gradient-to-br from-emerald-500/10 via-emerald-500/5 to-transparent rounded-xl lg:rounded-2xl p-3 sm:p-4 lg:p-6 border border-emerald-500/20 shadow-lg backdrop-blur-sm group"
       >
         <div className="absolute inset-0 bg-gradient-to-b from-white/[0.03] to-transparent rounded-lg lg:rounded-2xl pointer-events-none" />
 
-        <div className="flex items-start gap-3 lg:gap-4 relative">
-          <div className="flex-shrink-0 mt-0.5 lg:mt-1">
+        <div className="flex items-start gap-2.5 lg:gap-4 relative">
+          <div className="flex-shrink-0 mt-0.5">
             <Tooltip content="Answer found directly in documents">
-              <div className="w-7 h-7 lg:w-8 lg:h-8 rounded-lg lg:rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-600 flex items-center justify-center shadow-lg shadow-emerald-500/25">
+              <div className="w-6.5 h-6.5 flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600 shadow-lg shadow-emerald-500/25 lg:h-8 lg:w-8 lg:rounded-xl">
                 <svg
-                  className="w-3.5 h-3.5 lg:w-4 lg:h-4 text-white"
+                  className="h-3.5 w-3.5 text-white lg:h-4 lg:w-4"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -348,8 +348,8 @@ export function ResponseRenderer({
           </div>
 
           <div className="flex-1 min-w-0">
-            <div className="mb-2.5 lg:mb-3 flex items-start justify-between gap-3">
-              <span className="inline-flex items-center gap-1.5 px-2 lg:px-3 py-0.5 lg:py-1 bg-emerald-500/20 text-emerald-400 rounded-lg backdrop-blur-sm border border-emerald-500/30 text-[10px] lg:text-xs">
+            <div className="mb-2 flex items-start justify-between gap-2.5 lg:mb-3 lg:gap-3">
+              <span className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/20 px-2 py-0.5 text-[10px] text-emerald-400 backdrop-blur-sm lg:px-3 lg:py-1 lg:text-xs">
                 <svg
                   className="w-2 h-2 lg:w-3 lg:h-3"
                   fill="currentColor"
@@ -388,7 +388,7 @@ export function ResponseRenderer({
               {isCompareResult ? (
                 renderCompareResults()
               ) : (
-                <div className="text-sm lg:text-base text-foreground leading-relaxed mb-2.5 lg:mb-4 whitespace-pre-wrap">
+                <div className="mb-2.5 whitespace-pre-wrap text-[14px] leading-6 text-foreground lg:mb-4 lg:text-base lg:leading-relaxed">
                   {response.answer}
                 </div>
               )}
@@ -407,14 +407,14 @@ export function ResponseRenderer({
   if (response.mode === "guided_fallback") {
     return (
       <div
-        className="relative bg-gradient-to-br from-amber-500/10 via-amber-500/5 to-transparent rounded-lg lg:rounded-2xl p-3.5 sm:p-4 lg:p-6 border border-amber-500/20 shadow-lg backdrop-blur-sm group"
+        className="relative bg-gradient-to-br from-amber-500/10 via-amber-500/5 to-transparent rounded-xl lg:rounded-2xl p-3 sm:p-4 lg:p-6 border border-amber-500/20 shadow-lg backdrop-blur-sm group"
       >
         <div className="absolute inset-0 bg-gradient-to-b from-white/[0.03] to-transparent rounded-lg lg:rounded-2xl pointer-events-none" />
 
-        <div className="flex items-start gap-3 lg:gap-4 relative">
-          <div className="flex-shrink-0 mt-0.5 lg:mt-1">
+        <div className="flex items-start gap-2.5 lg:gap-4 relative">
+          <div className="flex-shrink-0 mt-0.5">
             <Tooltip content="Guidance provided when answer not found verbatim">
-              <div className="w-7 h-7 lg:w-8 lg:h-8 rounded-lg lg:rounded-xl bg-gradient-to-br from-amber-500 to-amber-600 flex items-center justify-center shadow-lg shadow-amber-500/25">
+              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-amber-500 to-amber-600 shadow-lg shadow-amber-500/25 lg:h-8 lg:w-8 lg:rounded-xl">
                 <svg
                   className="w-3.5 h-3.5 lg:w-4 lg:h-4 text-white"
                   fill="none"
@@ -433,8 +433,8 @@ export function ResponseRenderer({
           </div>
 
           <div className="flex-1 min-w-0">
-            <div className="mb-2.5 lg:mb-3 flex items-start justify-between gap-3">
-              <span className="inline-flex items-center gap-1.5 px-2 lg:px-3 py-0.5 lg:py-1 bg-amber-500/20 text-amber-400 rounded-lg backdrop-blur-sm border border-amber-500/30 text-[10px] lg:text-xs">
+            <div className="mb-2 flex items-start justify-between gap-2.5 lg:mb-3 lg:gap-3">
+              <span className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/20 px-2 py-0.5 text-[10px] text-amber-400 backdrop-blur-sm lg:px-3 lg:py-1 lg:text-xs">
                 <svg
                   className="w-2 h-2 lg:w-3 lg:h-3"
                   fill="currentColor"
@@ -467,17 +467,17 @@ export function ResponseRenderer({
               </button>
             </div>
 
-            <div className="text-sm lg:text-base text-foreground leading-relaxed whitespace-pre-wrap">
+            <div className="whitespace-pre-wrap text-[14px] leading-6 text-foreground lg:text-base lg:leading-relaxed">
               {response.answer}
             </div>
 
             {showsMatchedDocuments && (
-              <div className="mt-3.5 lg:mt-4.5 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 sm:p-3.5 lg:p-4">
+              <div className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-2.5 sm:p-3.5 lg:mt-4.5 lg:p-4">
                 <div className="mb-2 sm:mb-2.5">
-                  <div className="text-[10px] lg:text-xs text-amber-400 uppercase tracking-wider mb-1.5">
+                  <div className="mb-1 text-[10px] uppercase tracking-wider text-amber-400 lg:mb-1.5 lg:text-xs">
                     Multiple Matches
                   </div>
-                  <p className="text-sm lg:text-base text-foreground leading-relaxed sm:leading-relaxed">
+                  <p className="text-[14px] leading-6 text-foreground lg:text-base lg:leading-relaxed">
                     I found multiple matching documents. Choose one to continue, or compare them.
                   </p>
                 </div>
@@ -488,9 +488,9 @@ export function ResponseRenderer({
                       type="button"
                       onClick={() => handleMatchedDocumentClick(document)}
                       disabled={!submittedQuery || !onSubmitQuery || !document.source || isProcessing}
-                      className="w-full min-h-12 flex flex-col items-start gap-2 rounded-xl border border-border/50 bg-card/60 px-3 py-3 text-left transition-colors hover:border-amber-500/30 hover:bg-amber-500/10 disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-0 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-3 sm:py-3"
+                      className="w-full min-h-11 flex flex-col items-start gap-1.5 rounded-xl border border-border/50 bg-card/60 px-3 py-2.5 text-left transition-colors hover:border-amber-500/30 hover:bg-amber-500/10 disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-0 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-3 sm:py-3"
                     >
-                      <span className="w-full min-w-0 truncate text-sm lg:text-base text-foreground/90 sm:flex-1 sm:pr-3">
+                      <span className="w-full min-w-0 truncate text-[14px] text-foreground/90 sm:flex-1 sm:pr-3 lg:text-base">
                         {document.display_name}
                       </span>
                       <span className="inline-flex items-center rounded-md border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-[10px] lg:text-xs text-amber-400 tracking-wide self-start sm:self-auto whitespace-nowrap">
@@ -515,14 +515,14 @@ export function ResponseRenderer({
   if (response.mode === "hard_refusal") {
     return (
       <div
-        className="relative bg-gradient-to-br from-zinc-500/10 via-zinc-500/5 to-transparent rounded-lg lg:rounded-2xl p-3.5 sm:p-4 lg:p-6 border border-zinc-500/20 shadow-lg backdrop-blur-sm group"
+        className="relative bg-gradient-to-br from-zinc-500/10 via-zinc-500/5 to-transparent rounded-xl lg:rounded-2xl p-3 sm:p-4 lg:p-6 border border-zinc-500/20 shadow-lg backdrop-blur-sm group"
       >
         <div className="absolute inset-0 bg-gradient-to-b from-white/[0.03] to-transparent rounded-lg lg:rounded-2xl pointer-events-none" />
 
-        <div className="flex items-start gap-3 lg:gap-4 relative">
-          <div className="flex-shrink-0 mt-0.5 lg:mt-1">
+        <div className="flex items-start gap-2.5 lg:gap-4 relative">
+          <div className="flex-shrink-0 mt-0.5">
             <Tooltip content="Query cannot be answered from documents">
-              <div className="w-7 h-7 lg:w-8 lg:h-8 rounded-lg lg:rounded-xl bg-gradient-to-br from-zinc-600 to-zinc-700 flex items-center justify-center shadow-lg shadow-zinc-500/25">
+              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-zinc-600 to-zinc-700 shadow-lg shadow-zinc-500/25 lg:h-8 lg:w-8 lg:rounded-xl">
                 <svg
                   className="w-3.5 h-3.5 lg:w-4 lg:h-4 text-white"
                   fill="none"
@@ -541,8 +541,8 @@ export function ResponseRenderer({
           </div>
 
           <div className="flex-1 min-w-0">
-            <div className="mb-2.5 lg:mb-3 flex items-start justify-between gap-3">
-              <span className="inline-flex items-center gap-1.5 px-2 lg:px-3 py-0.5 lg:py-1 bg-zinc-500/20 text-zinc-400 rounded-lg backdrop-blur-sm border border-zinc-500/30 text-[10px] lg:text-xs">
+            <div className="mb-2 flex items-start justify-between gap-2.5 lg:mb-3 lg:gap-3">
+              <span className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-500/30 bg-zinc-500/20 px-2 py-0.5 text-[10px] text-zinc-400 backdrop-blur-sm lg:px-3 lg:py-1 lg:text-xs">
                 <svg
                   className="w-2 h-2 lg:w-3 lg:h-3"
                   fill="currentColor"
@@ -575,7 +575,7 @@ export function ResponseRenderer({
               </button>
             </div>
 
-            <div className="text-sm lg:text-base text-foreground leading-relaxed whitespace-pre-wrap">
+            <div className="whitespace-pre-wrap text-[14px] leading-6 text-foreground lg:text-base lg:leading-relaxed">
               {response.answer}
             </div>
 
