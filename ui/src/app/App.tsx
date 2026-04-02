@@ -17,12 +17,14 @@ import {
   Conversation,
   QuerySubmitOptions,
   WorkspaceScope,
+  ConversationCompareMeta,
   ConversationScopeMeta,
 } from "./types/api";
 import { toast, Toaster } from "sonner";
 
 type View = "query" | "conversation";
 type ConversationScope = ConversationScopeMeta;
+type ConversationCompare = ConversationCompareMeta;
 
 function App() {
   const [authState, setAuthState] = useState(api.getAuthState());
@@ -65,8 +67,15 @@ function App() {
   const [conversationScopes, setConversationScopes] = useState<
     Record<string, ConversationScope>
   >({});
+  const [conversationCompares, setConversationCompares] = useState<
+    Record<string, ConversationCompare>
+  >({});
   const [draftWorkspaceScope, setDraftWorkspaceScope] =
     useState<ConversationScope | null>(null);
+  const [followUpContextDisabledByConversation, setFollowUpContextDisabledByConversation] =
+    useState<Record<string, true>>({});
+  const [compareFollowUpDisabledByConversation, setCompareFollowUpDisabledByConversation] =
+    useState<Record<string, true>>({});
   const previousIdentityKeyRef = useRef<string | null>(null);
   const isCompletingGuestUpgradeRef = useRef(false);
 
@@ -80,6 +89,51 @@ function App() {
         next[conversationId] = scope;
       } else {
         delete next[conversationId];
+      }
+      return next;
+    });
+  };
+
+  const setConversationFollowUpContextEnabled = (
+    conversationId: string,
+    enabled: boolean,
+  ) => {
+    setFollowUpContextDisabledByConversation((prev) => {
+      const next = { ...prev };
+      if (enabled) {
+        delete next[conversationId];
+      } else {
+        next[conversationId] = true;
+      }
+      return next;
+    });
+  };
+
+  const syncConversationCompare = (
+    conversationId: string,
+    compare: ConversationCompare | null,
+  ) => {
+    setConversationCompares((prev) => {
+      const next = { ...prev };
+      if (compare) {
+        next[conversationId] = compare;
+      } else {
+        delete next[conversationId];
+      }
+      return next;
+    });
+  };
+
+  const setConversationCompareFollowUpEnabled = (
+    conversationId: string,
+    enabled: boolean,
+  ) => {
+    setCompareFollowUpDisabledByConversation((prev) => {
+      const next = { ...prev };
+      if (enabled) {
+        delete next[conversationId];
+      } else {
+        next[conversationId] = true;
       }
       return next;
     });
@@ -112,6 +166,50 @@ function App() {
     const turns = conversation?.turns ?? [];
     const lastTurn = turns[turns.length - 1];
     return getScopeFromResponse(lastTurn?.response);
+  };
+
+  const getCompareFromResponse = (
+    response: QueryResponse | null | undefined,
+  ): ConversationCompare | null => {
+    if (response?.artifacts?.workspace_scope === "document") {
+      return null;
+    }
+    if (response?.artifacts?.reason !== "compare_result") {
+      return null;
+    }
+
+    const compareResults = response.artifacts?.compare_results ?? [];
+    if (compareResults.length !== 2) {
+      return null;
+    }
+
+    const sources = compareResults
+      .map((item) => item.source?.trim())
+      .filter((source): source is string => Boolean(source));
+    const labels = compareResults
+      .map((item) => (item.display_name || item.source || "").trim())
+      .filter(Boolean);
+
+    if (sources.length !== 2 || labels.length !== 2) {
+      return null;
+    }
+
+    return {
+      sources,
+      labels,
+      field: response.artifacts?.compare_field?.trim() || undefined,
+    };
+  };
+
+  const getCompareFromConversation = (
+    conversation: Conversation | null,
+  ): ConversationCompare | null => {
+    if (conversation?.compare) {
+      return conversation.compare;
+    }
+    const turns = conversation?.turns ?? [];
+    const lastTurn = turns[turns.length - 1];
+    return getCompareFromResponse(lastTurn?.response);
   };
 
   useEffect(() => {
@@ -172,7 +270,10 @@ function App() {
       setCurrentResponse(null);
       setSubmittedQuery("");
       setConversationScopes({});
+      setConversationCompares({});
       setDraftWorkspaceScope(null);
+      setFollowUpContextDisabledByConversation({});
+      setCompareFollowUpDisabledByConversation({});
     }
 
     previousIdentityKeyRef.current = nextIdentityKey;
@@ -300,10 +401,19 @@ function App() {
   const activeConversationScope = activeConversationId
     ? conversationScopes[activeConversationId] ?? null
     : null;
+  const activeConversationCompare = activeConversationId
+    ? conversationCompares[activeConversationId] ?? null
+    : null;
   const activeScope =
     currentView === "conversation"
       ? activeConversationScope
       : draftWorkspaceScope ?? activeConversationScope;
+  const activeCompare =
+    activeScope?.mode === "document" ||
+    !activeConversationId ||
+    compareFollowUpDisabledByConversation[activeConversationId]
+      ? null
+      : activeConversationCompare;
 
   const handleSubmitQuery = async (query: string, options?: QuerySubmitOptions) => {
     console.log("SUBMIT_QUERY_CALLED", query);
@@ -314,6 +424,16 @@ function App() {
       const conversationId = getActiveConversationId() ?? undefined;
       const selectedSource = options?.selectedSource ?? activeScope?.source;
       const workspaceScope = options?.workspaceScope ?? activeScope?.mode ?? "global";
+      const followUpContextEnabled =
+        options?.followUpContextEnabled ??
+        (conversationId
+          ? !followUpContextDisabledByConversation[conversationId]
+          : true);
+      const compareFollowUpEnabled =
+        options?.compareFollowUpEnabled ??
+        (conversationId
+          ? !compareFollowUpDisabledByConversation[conversationId]
+          : true);
       const scopeToPersist =
         selectedSource
           ? {
@@ -332,6 +452,8 @@ function App() {
         {
           selectedSource,
           workspaceScope,
+          followUpContextEnabled,
+          compareFollowUpEnabled,
         },
       );
 
@@ -340,7 +462,13 @@ function App() {
 
       const convId = response.conversation_id;
       const responseScope = getScopeFromResponse(response);
+      const responseCompare = getCompareFromResponse(response);
       syncConversationScope(convId, responseScope ?? scopeToPersist);
+      syncConversationCompare(convId, responseCompare);
+      if (responseScope || response.artifacts?.reason === "compare_result") {
+        setConversationFollowUpContextEnabled(convId, true);
+      }
+      setConversationCompareFollowUpEnabled(convId, true);
       if (scopeToPersist?.mode === "document") {
         setDraftWorkspaceScope(scopeToPersist);
       } else {
@@ -353,6 +481,7 @@ function App() {
       const conversationDetail = await api.getConversation(convId);
       setSelectedConversationDetail(conversationDetail);
       syncConversationScope(convId, getScopeFromConversation(conversationDetail));
+      syncConversationCompare(convId, getCompareFromConversation(conversationDetail));
 
       await loadConversations();
     } catch (error) {
@@ -464,10 +593,15 @@ function App() {
         conversationId,
         getScopeFromConversation(conversationDetail),
       );
+      syncConversationCompare(
+        conversationId,
+        getCompareFromConversation(conversationDetail),
+      );
     } catch (error) {
       toast.error("Failed to load conversation details");
       setSelectedConversationDetail(null);
       syncConversationScope(conversationId, null);
+      syncConversationCompare(conversationId, null);
     }
   };
 
@@ -493,6 +627,9 @@ function App() {
         delete next[conversationId];
         return next;
       });
+      syncConversationCompare(conversationId, null);
+      setConversationFollowUpContextEnabled(conversationId, true);
+      setConversationCompareFollowUpEnabled(conversationId, true);
 
       if (selectedConversationId === conversationId) {
         setSelectedConversationId(null);
@@ -529,6 +666,20 @@ function App() {
       delete next[conversationId];
       return next;
     });
+    setConversationFollowUpContextEnabled(conversationId, false);
+  };
+
+  const handleClearActiveCompare = () => {
+    if (activeScope?.mode === "document") {
+      return;
+    }
+
+    const conversationId = getActiveConversationId();
+    if (!conversationId) {
+      return;
+    }
+
+    setConversationCompareFollowUpEnabled(conversationId, false);
   };
 
   const handleExitDocumentWorkspace = () => {
@@ -602,7 +753,10 @@ function App() {
     setIsConfirmDeleteOpen(false);
     setIsConfirmAccountDeleteOpen(false);
     setConversationScopes({});
+    setConversationCompares({});
     setDraftWorkspaceScope(null);
+    setFollowUpContextDisabledByConversation({});
+    setCompareFollowUpDisabledByConversation({});
     await loadDocuments();
     await loadConversations();
   };
@@ -640,7 +794,10 @@ function App() {
       setIsConfirmDeleteOpen(false);
       setIsConfirmAccountDeleteOpen(false);
       setConversationScopes({});
+      setConversationCompares({});
       setDraftWorkspaceScope(null);
+      setFollowUpContextDisabledByConversation({});
+      setCompareFollowUpDisabledByConversation({});
       await loadDocuments();
       await loadConversations();
       toast.success("Account deleted");
@@ -908,7 +1065,9 @@ function App() {
                 isProcessing={isProcessing}
                 submittedQuery={submittedQuery}
                 activeScope={activeScope}
+                activeCompare={activeCompare}
                 onClearScope={handleClearActiveScope}
+                onClearCompareContext={handleClearActiveCompare}
                 onExitDocumentWorkspace={handleExitDocumentWorkspace}
                 onNewDocumentWorkspaceChat={handleStartNewActiveDocumentWorkspaceChat}
                 onClearDocumentWorkspaceChat={handleClearCurrentDocumentWorkspaceChat}
@@ -920,7 +1079,9 @@ function App() {
                 onSubmitQuery={handleSubmitQuery}
                 isProcessing={isProcessing}
                 activeScope={activeScope}
+                activeCompare={activeCompare}
                 onClearScope={handleClearActiveScope}
+                onClearCompareContext={handleClearActiveCompare}
                 onExitDocumentWorkspace={handleExitDocumentWorkspace}
                 onNewDocumentWorkspaceChat={handleStartNewActiveDocumentWorkspaceChat}
                 onClearDocumentWorkspaceChat={handleClearCurrentDocumentWorkspaceChat}

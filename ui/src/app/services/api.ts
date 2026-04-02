@@ -389,6 +389,8 @@ export const api = {
         conversation_id: convId,
         selected_source: options?.selectedSource,
         workspace_scope: options?.workspaceScope ?? "global",
+        follow_up_context: options?.followUpContextEnabled ?? true,
+        compare_follow_up: options?.compareFollowUpEnabled ?? true,
         debug: false,
       }),
     });

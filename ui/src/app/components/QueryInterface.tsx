@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { QueryResponse, QuerySubmitOptions, WorkspaceScope } from '../types/api';
+import { ConversationCompareMeta, QueryResponse, QuerySubmitOptions, WorkspaceScope } from '../types/api';
 import { ResponseRenderer } from './ResponseRenderer';
 import { WorkspaceBanner } from './WorkspaceBanner';
+import { CompareBanner } from './CompareBanner';
 
 type ActiveScope = {
   label: string;
@@ -14,7 +15,9 @@ interface QueryInterfaceProps {
   isProcessing: boolean;
   submittedQuery?: string;
   activeScope?: ActiveScope | null;
+  activeCompare?: ConversationCompareMeta | null;
   onClearScope?: () => void;
+  onClearCompareContext?: () => void;
   onExitDocumentWorkspace?: () => void;
   onNewDocumentWorkspaceChat?: () => void;
   onClearDocumentWorkspaceChat?: () => void;
@@ -26,7 +29,9 @@ export function QueryInterface({
   isProcessing,
   submittedQuery,
   activeScope,
+  activeCompare,
   onClearScope,
+  onClearCompareContext,
   onExitDocumentWorkspace,
   onNewDocumentWorkspaceChat,
   onClearDocumentWorkspaceChat,
@@ -69,6 +74,15 @@ export function QueryInterface({
               onExitDocumentWorkspace={onExitDocumentWorkspace}
               onNewDocumentWorkspaceChat={onNewDocumentWorkspaceChat}
               onClearDocumentWorkspaceChat={onClearDocumentWorkspaceChat}
+            />
+          </div>
+        )}
+
+        {activeCompare && !activeScope && (
+          <div className="max-w-3xl mx-auto mb-3 lg:mb-6">
+            <CompareBanner
+              compare={activeCompare}
+              onClear={onClearCompareContext}
             />
           </div>
         )}

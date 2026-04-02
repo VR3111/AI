@@ -1,10 +1,12 @@
 import os
 import re
 import uuid
+import json
 import sqlite3
 import smtplib
 import logging
 import traceback
+from dataclasses import dataclass
 from types import SimpleNamespace
 from datetime import datetime, timezone
 from email.message import EmailMessage
@@ -331,28 +333,82 @@ def persist_and_return(response: dict):
 # =====================================================
 # DB-backed conversation state
 # =====================================================
-def get_last_successful_query(tenant_id: str, conversation_id: str) -> Optional[str]:
+@dataclass(frozen=True)
+class ConversationTurnRecord:
+    query: str
+    mode: str
+    artifacts: dict[str, Any]
+    created_at: str
+
+
+@dataclass(frozen=True)
+class ConversationFollowUpContext:
+    kind: str
+    source: str | None = None
+    source_display_name: str | None = None
+    compare_sources: tuple[str, ...] = ()
+    compare_display_names: tuple[str, ...] = ()
+    compare_field: str | None = None
+    anchor_query: str = ""
+
+
+def get_recent_conversation_turns(
+    tenant_id: str,
+    conversation_id: str,
+    *,
+    limit: int = 25,
+) -> list[ConversationTurnRecord]:
     db_path = os.path.join("data", "tenants", tenant_id, "p1.db")
     if not os.path.isfile(db_path):
-        return None
+        return []
 
     conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
     try:
-        row = conn.execute(
+        rows = conn.execute(
             """
-            SELECT query
+            SELECT query, mode, artifacts_json, created_at
             FROM queries
             WHERE tenant_id = ?
               AND conversation_id = ?
-              AND mode = 'direct_answer'
             ORDER BY created_at DESC
-            LIMIT 1
+            LIMIT ?
             """,
-            (tenant_id, conversation_id),
-        ).fetchone()
-        return row[0] if row else None
+            (tenant_id, conversation_id, limit),
+        ).fetchall()
+
+        turns: list[ConversationTurnRecord] = []
+        for row in reversed(rows):
+            raw_artifacts = str(row["artifacts_json"] or "").strip()
+            artifacts: dict[str, Any] = {}
+            if raw_artifacts:
+                try:
+                    parsed = json.loads(raw_artifacts)
+                except json.JSONDecodeError:
+                    parsed = {}
+                if isinstance(parsed, dict):
+                    artifacts = parsed
+
+            turns.append(
+                ConversationTurnRecord(
+                    query=str(row["query"] or ""),
+                    mode=str(row["mode"] or ""),
+                    artifacts=artifacts,
+                    created_at=str(row["created_at"] or ""),
+                )
+            )
+        return turns
     finally:
         conn.close()
+
+
+def _last_successful_query_from_turns(
+    turns: list[ConversationTurnRecord],
+) -> Optional[str]:
+    for turn in reversed(turns):
+        if turn.mode == "direct_answer" and turn.query.strip():
+            return turn.query
+    return None
 
 
 # =====================================================
@@ -364,6 +420,8 @@ class QueryRequest(BaseModel):
     tenant_id: Optional[str] = None
     selected_source: Optional[str] = None
     workspace_scope: Optional[str] = None
+    follow_up_context: Optional[bool] = True
+    compare_follow_up: Optional[bool] = True
     debug: bool = False
 
 
@@ -581,15 +639,53 @@ def _focus_phrase_variants(focus_phrase: str | None) -> list[str]:
 
     variants: list[str] = []
     base = focus_phrase.strip().lower()
+
+    apr_variants: list[str] = []
+    if base == "apr":
+        apr_variants = [
+            "annual percentage rate",
+            "purchase apr",
+            "purchase annual percentage rate",
+            "balance transfer apr",
+            "balance transfer annual percentage rate",
+            "cash advance apr",
+            "cash advance annual percentage rate",
+        ]
+    elif base == "annual percentage rate":
+        apr_variants = [
+            "apr",
+            "purchase apr",
+            "purchase annual percentage rate",
+            "balance transfer apr",
+            "balance transfer annual percentage rate",
+            "cash advance apr",
+            "cash advance annual percentage rate",
+        ]
+    elif base == "purchase apr":
+        apr_variants = ["purchase annual percentage rate"]
+    elif base == "purchase annual percentage rate":
+        apr_variants = ["purchase apr"]
+    elif base == "balance transfer apr":
+        apr_variants = ["balance transfer annual percentage rate"]
+    elif base == "balance transfer annual percentage rate":
+        apr_variants = ["balance transfer apr"]
+    elif base == "cash advance apr":
+        apr_variants = ["cash advance annual percentage rate"]
+    elif base == "cash advance annual percentage rate":
+        apr_variants = ["cash advance apr"]
+
     for candidate in (
         base,
         re.sub(r"\bannual fee\b", "annual membership fee", base).strip(),
+        re.sub(r"\bannual membership fee\b", "annual fee", base).strip(),
         re.sub(r"\blate payment fee\b", "late fee", base).strip(),
+        re.sub(r"\blate fee\b", "late payment fee", base).strip(),
         re.sub(r"\bapr\b", "annual percentage rate", base).strip(),
         re.sub(r"\baprs\b", "annual percentage rates", base).strip(),
         re.sub(r"\bfees?\b$", "", base).strip(),
         re.sub(r"\b(?:within|before|after|when|if)\b.+$", "", base).strip(),
         re.split(r"\b(?:is|are|was|were|can|could|should)\b", base, 1)[0].strip(),
+        *apr_variants,
     ):
         if not candidate or candidate in variants:
             continue
@@ -924,6 +1020,107 @@ def _source_display_name(source: Any) -> str:
     return os.path.basename(source_text)
 
 
+def _artifacts_workspace_scope(artifacts: dict[str, Any]) -> str:
+    workspace_scope = str(artifacts.get("workspace_scope") or "global").strip().lower()
+    return workspace_scope if workspace_scope in {"global", "document"} else "global"
+
+
+def _compare_sources_from_artifacts(
+    artifacts: dict[str, Any],
+) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    seen_sources: set[str] = set()
+    raw_compare_results = artifacts.get("compare_results")
+    if not isinstance(raw_compare_results, list):
+        return pairs
+
+    for item in raw_compare_results:
+        if not isinstance(item, dict):
+            continue
+        source = str(item.get("source") or "").strip()
+        if not source or source in seen_sources:
+            continue
+        seen_sources.add(source)
+        display_name = (
+            str(item.get("display_name") or "").strip()
+            or _source_display_name(source)
+        )
+        pairs.append((source, display_name))
+
+    return pairs
+
+
+def _follow_up_context_from_turn(
+    turn: ConversationTurnRecord,
+) -> ConversationFollowUpContext | None:
+    artifacts = turn.artifacts
+    if _artifacts_workspace_scope(artifacts) != "global":
+        return None
+
+    reason = str(artifacts.get("reason") or "").strip().lower()
+    compare_sources = _compare_sources_from_artifacts(artifacts)
+    compare_field = str(artifacts.get("compare_field") or "").strip() or None
+    if reason == "compare_result" and len(compare_sources) == 2:
+        return ConversationFollowUpContext(
+            kind="compare",
+            compare_sources=tuple(source for source, _display_name in compare_sources),
+            compare_display_names=tuple(
+                display_name for _source, display_name in compare_sources
+            ),
+            compare_field=compare_field,
+            anchor_query=turn.query,
+        )
+
+    selected_source = str(artifacts.get("selected_source") or "").strip()
+    if not selected_source:
+        return None
+
+    return ConversationFollowUpContext(
+        kind="single_document",
+        source=selected_source,
+        source_display_name=(
+            str(artifacts.get("selected_source_display_name") or "").strip()
+            or _source_display_name(selected_source)
+        ),
+        anchor_query=turn.query,
+    )
+
+
+def _turn_blocks_follow_up_context(turn: ConversationTurnRecord) -> bool:
+    if _artifacts_workspace_scope(turn.artifacts) == "document":
+        return True
+
+    reason = str(turn.artifacts.get("reason") or "").strip().lower()
+    return reason in {"reset", "multiple_documents_match", "compare_documents_needed"}
+
+
+def _turn_ends_active_follow_up_context(turn: ConversationTurnRecord) -> bool:
+    if not turn.query.strip():
+        return False
+    return True
+
+
+def _resolve_follow_up_context(
+    turns: list[ConversationTurnRecord],
+) -> ConversationFollowUpContext | None:
+    for turn in reversed(turns):
+        context = _follow_up_context_from_turn(turn)
+        if context is not None:
+            return context
+        if _turn_blocks_follow_up_context(turn):
+            return None
+        if _turn_ends_active_follow_up_context(turn):
+            return None
+    return None
+
+
+def _query_mentions_any_retrieved_document(
+    query: str,
+    results: list[tuple[Any, float]],
+) -> bool:
+    return any(_query_mentions_document(query, doc) for doc, _score in results)
+
+
 def _merge_scope_artifacts(
     artifacts: dict[str, Any],
     *,
@@ -1202,6 +1399,31 @@ def _clean_compare_focus_query(query: str) -> str:
     return cleaned.strip(" .,:;?")
 
 
+def _normalize_compare_focus_query(query: str) -> str:
+    cleaned = _clean_compare_focus_query(query)
+    cleaned = re.sub(
+        r"^\s*(?:and|also|so|then)\b[\s,:-]*",
+        "",
+        cleaned,
+        flags=re.I,
+    )
+    cleaned = re.sub(
+        r"^\s*(?:what about|how about|tell me about|show me|give me)\b[\s,:-]*",
+        "",
+        cleaned,
+        flags=re.I,
+    )
+    cleaned = re.sub(
+        r"^\s*what(?:'s|\s+is|\s+are)\b[\s,:-]*",
+        "",
+        cleaned,
+        flags=re.I,
+    )
+    cleaned = re.sub(r"^\s*(?:the|any)\b\s+", "", cleaned, flags=re.I)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned.strip(" .,:;?") or query.strip()
+
+
 def _strip_document_reference_from_query(query: str, doc: Any) -> str:
     stripped = query
     for term in sorted(_document_query_terms(doc), key=len, reverse=True):
@@ -1393,6 +1615,189 @@ def _build_compare_answer(compare_results: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _canonical_compare_field(compare_query: str) -> tuple[str, str, list[str]]:
+    focus_phrase = _extract_focus_phrase(compare_query) or compare_query.strip().lower()
+    normalized_focus = _normalize_for_match(focus_phrase)
+
+    if normalized_focus in {
+        "apr",
+        "annual percentage rate",
+        "purchase apr",
+        "purchase annual percentage rate",
+        "variable apr",
+        "balance transfer apr",
+        "balance transfer annual percentage rate",
+        "cash advance apr",
+        "cash advance annual percentage rate",
+    }:
+        return (
+            "apr",
+            "APR",
+            [
+                "purchase apr",
+                "purchase annual percentage rate",
+                "variable apr",
+                "annual percentage rate",
+                "apr",
+                "balance transfer apr",
+                "balance transfer annual percentage rate",
+                "cash advance apr",
+                "cash advance annual percentage rate",
+            ],
+        )
+
+    if normalized_focus in {"annual fee", "annual membership fee"}:
+        return ("annual_fee", "annual fee", ["annual fee", "annual membership fee"])
+
+    if normalized_focus in {"late fee", "late payment fee", "late payment"}:
+        return ("late_fee", "late fee", ["late payment fee", "late fee", "late payment"])
+
+    if normalized_focus in {"foreign transaction fee", "foreign transaction"}:
+        return (
+            "foreign_transaction_fee",
+            "foreign transaction fee",
+            ["foreign transaction fee", "foreign transaction"],
+        )
+
+    return (
+        normalized_focus or focus_phrase,
+        focus_phrase.strip(" .,:;?") or compare_query.strip() or "that field",
+        _focus_phrase_variants(focus_phrase) or ([focus_phrase] if focus_phrase else []),
+    )
+
+
+def _normalize_percent_range(value: str) -> str | None:
+    range_match = re.search(
+        r"(\d+(?:\.\d+)?%)\s*(?:to|-|–|—)\s*(\d+(?:\.\d+)?%)",
+        value,
+        re.I,
+    )
+    if range_match:
+        return f"{range_match.group(1)}–{range_match.group(2)}"
+
+    single_match = re.search(r"(\d+(?:\.\d+)?%)", value, re.I)
+    if single_match:
+        return single_match.group(1)
+
+    return None
+
+
+def _normalize_compare_field_value(field_key: str, raw_value: str | None) -> str | None:
+    compact = re.sub(r"\s+", " ", str(raw_value or "")).strip()
+    if not compact:
+        return None
+
+    normalized_none = re.sub(r"[^a-z]+", "", compact.lower())
+    if normalized_none in {"none", "nonefirsttimeyoupaylate"} or compact.lower() in {"no ne", "none."}:
+        if field_key == "annual_fee":
+            return "No annual fee."
+        if field_key == "foreign_transaction_fee":
+            return "No foreign transaction fee."
+        if field_key == "late_fee":
+            return "No late fee."
+        return "None."
+
+    if field_key == "apr":
+        normalized_apr = _normalize_percent_range(compact)
+        if normalized_apr:
+            return f"Variable APR: {normalized_apr}."
+
+    if field_key == "annual_fee":
+        amount_match = re.search(r"\$\s*\d[\d,]*(?:\.\d+)?", compact)
+        if amount_match:
+            return f"{amount_match.group(0)}."
+
+    if field_key == "late_fee":
+        up_to_match = re.search(r"up to\s+(\$\s*\d[\d,]*(?:\.\d+)?)", compact, re.I)
+        if up_to_match and re.search(r"\bnone\b.*\bfirst time\b", compact, re.I):
+            return f"None first time, then up to {up_to_match.group(1)}."
+        if up_to_match:
+            return f"Up to {up_to_match.group(1)}."
+        amount_match = re.search(r"\$\s*\d[\d,]*(?:\.\d+)?", compact)
+        if amount_match:
+            return f"Up to {amount_match.group(0)}."
+
+    if field_key == "foreign_transaction_fee":
+        if re.fullmatch(r"\$\s*0+(?:\.0+)?\.?", compact):
+            return "No foreign transaction fee."
+        amount_match = re.search(r"\$\s*\d[\d,]*(?:\.\d+)?", compact)
+        if amount_match:
+            return f"{amount_match.group(0)}."
+        percent_match = _normalize_percent_range(compact)
+        if percent_match:
+            return f"{percent_match}."
+
+    compact_sentence = _compact_field_answer_value(compact)
+    if compact_sentence.lower() == "none":
+        if field_key == "annual_fee":
+            return "No annual fee."
+        if field_key == "foreign_transaction_fee":
+            return "No foreign transaction fee."
+        if field_key == "late_fee":
+            return "No late fee."
+        return "None."
+
+    if compact_sentence and compact_sentence[-1] not in ".!?":
+        compact_sentence = f"{compact_sentence}."
+    return compact_sentence or None
+
+
+def _extract_canonical_compare_field_value(
+    text: str,
+    *,
+    field_key: str,
+    field_aliases: list[str],
+) -> str | None:
+    normalized_text = re.sub(r"\s+", " ", text or " ")
+
+    if field_key == "apr":
+        for pattern in (
+            r"annual percentage rate\s*\(apr\)\s*for purchases\s*(?:from)?\s*([0-9.]+%\s*(?:to|-|–|—)\s*[0-9.]+%|[0-9.]+%)",
+            r"purchase apr\s*(?:is|:|for)?\s*([0-9.]+%\s*(?:to|-|–|—)\s*[0-9.]+%|[0-9.]+%)",
+            r"variable apr\s*(?:is|:)?\s*([0-9.]+%\s*(?:to|-|–|—)\s*[0-9.]+%|[0-9.]+%)",
+        ):
+            match = re.search(pattern, normalized_text, re.I)
+            if match:
+                return _normalize_compare_field_value(field_key, match.group(1))
+
+    if field_key == "annual_fee":
+        match = re.search(
+            r"(?:^|\n)\s*annual fee(?!\s+for)\s*:?\s*(none\b|no\s*ne\b|\$\s*\d[\d,]*(?:\.\d+)?)",
+            text,
+            re.I,
+        )
+        if match:
+            return _normalize_compare_field_value(field_key, match.group(1))
+
+    if field_key == "foreign_transaction_fee":
+        match = re.search(
+            r"(?:^|\n)\s*foreign transaction(?: fee)?\s*:?\s*(none\b|no\s*ne\b|\$\s*\d[\d,]*(?:\.\d+)?|\d+(?:\.\d+)?%)",
+            text,
+            re.I,
+        )
+        if match:
+            return _normalize_compare_field_value(field_key, match.group(1))
+
+    if field_key == "late_fee":
+        match = re.search(
+            r"(?:^|\n)\s*late fee\s*:?\s*([^\n]{1,160})",
+            text,
+            re.I,
+        )
+        if match:
+            normalized = _normalize_compare_field_value(field_key, match.group(1))
+            if normalized:
+                return normalized
+
+    for alias in field_aliases:
+        extracted = _extract_field_value(text, alias)
+        normalized = _normalize_compare_field_value(field_key, extracted)
+        if normalized:
+            return normalized
+
+    return None
+
+
 def _compare_result_for_source(
     *,
     tenant_id: str,
@@ -1407,12 +1812,16 @@ def _compare_result_for_source(
         source_filter=source,
     )
     results = _rerank_results(compare_query, dedupe_results(raw_results))
-    focus_phrase = _extract_focus_phrase(compare_query) or compare_query.strip().lower() or None
+    field_key, _field_label, field_aliases = _canonical_compare_field(compare_query)
 
     field_value = None
     field_result = None
     for doc, score in results:
-        extracted = _extract_field_value(doc.page_content or "", focus_phrase)
+        extracted = _extract_canonical_compare_field_value(
+            doc.page_content or "",
+            field_key=field_key,
+            field_aliases=field_aliases,
+        )
         if extracted:
             field_value = extracted
             field_result = (doc, score)
@@ -1608,12 +2017,23 @@ def query_docs(payload: QueryRequest, request: Request):
     tenant_id = request.state.tenant_id
     conversation_id = payload.conversation_id
     selected_source = str(payload.selected_source or "").strip()
+    client_selected_source = selected_source
     workspace_scope = str(payload.workspace_scope or "global").strip().lower() or "global"
     if workspace_scope not in {"global", "document"}:
         workspace_scope = "global"
 
     is_document_workspace = workspace_scope == "document"
     explicit_compare_query = _is_explicit_compare_query(original_query)
+    follow_up_context_enabled = payload.follow_up_context is not False
+    compare_follow_up_enabled = payload.compare_follow_up is not False
+    conversation_turns = (
+        get_recent_conversation_turns(tenant_id, conversation_id)
+        if conversation_id
+        else []
+    )
+    inferred_follow_up_context: ConversationFollowUpContext | None = None
+    inferred_compare_sources: list[tuple[str, str]] = []
+    compare_context_cleared = False
 
     if is_document_workspace and not selected_source:
         raise HTTPException(
@@ -1643,14 +2063,56 @@ def query_docs(payload: QueryRequest, request: Request):
             )
         )
 
-    # ---------------- rewrite (DB-backed) ----------------
-    last_successful_query = get_last_successful_query(tenant_id, conversation_id)
+    # ---------------- conversation follow-up context ----------------
+    if (
+        follow_up_context_enabled
+        and not is_document_workspace
+        and not selected_source
+        and not explicit_compare_query
+    ):
+        candidate_context = _resolve_follow_up_context(conversation_turns)
+        if candidate_context is not None:
+            if candidate_context.kind == "compare" and not compare_follow_up_enabled:
+                compare_context_cleared = True
+            else:
+                preflight_results, _preflight_status = retrieve(
+                    original_query,
+                    k=15,
+                    tenant_id=tenant_id,
+                    return_status=True,
+                )
+                preflight_distance_results = dedupe_results(preflight_results)
+                if not _query_mentions_any_retrieved_document(
+                    original_query,
+                    preflight_distance_results,
+                ):
+                    inferred_follow_up_context = candidate_context
+                    if candidate_context.kind == "single_document" and candidate_context.source:
+                        selected_source = candidate_context.source
+                    elif candidate_context.kind == "compare":
+                        inferred_compare_sources = list(
+                            zip(
+                                candidate_context.compare_sources,
+                                candidate_context.compare_display_names,
+                            )
+                        )
 
-    rewritten_query = (
-        f"In the context of {last_successful_query}, {original_query}"
-        if len(original_query.split()) <= 6 and last_successful_query
-        else original_query
+    # ---------------- rewrite (history-backed fallback) ----------------
+    last_successful_query = (
+        _last_successful_query_from_turns(conversation_turns)
+        if follow_up_context_enabled
+        else None
     )
+
+    rewritten_query = original_query
+    if (
+        inferred_follow_up_context is None
+        and not compare_context_cleared
+        and not selected_source
+        and len(original_query.split()) <= 6
+        and last_successful_query
+    ):
+        rewritten_query = f"In the context of {last_successful_query}, {original_query}"
 
     # ---------------- refusals ----------------
     if is_vague_query(original_query):
@@ -1684,6 +2146,7 @@ def query_docs(payload: QueryRequest, request: Request):
     # ---------------- retrieval ----------------
     if explicit_compare_query and is_document_workspace:
         compare_focus_query = _document_workspace_compare_focus_query(original_query)
+        _document_compare_field_key, document_compare_field_label, _document_compare_aliases = _canonical_compare_field(compare_focus_query)
         retrieval_query = compare_focus_query or original_query
         raw_results, status = retrieve(
             retrieval_query,
@@ -1748,7 +2211,7 @@ def query_docs(payload: QueryRequest, request: Request):
                 artifacts=scoped_artifacts(
                     {
                         "reason": "document_workspace_compare_requires_global_chat",
-                        "compare_field": _extract_focus_phrase(compare_focus_query) or compare_focus_query,
+                        "compare_field": document_compare_field_label,
                     }
                 ),
                 debug={
@@ -1762,61 +2225,98 @@ def query_docs(payload: QueryRequest, request: Request):
             )
         )
 
-    if explicit_compare_query and not is_document_workspace:
-        raw_results, status = retrieve(
-            rewritten_query, k=15, tenant_id=tenant_id, return_status=True
-        )
-        raw_distance_results = dedupe_results(raw_results)
+    if (explicit_compare_query or inferred_compare_sources) and not is_document_workspace:
+        compare_sources: list[tuple[str, Any]] = []
+        compare_focus_query = original_query
+        _compare_field_key, compare_focus_phrase, _compare_field_aliases = _canonical_compare_field(compare_focus_query)
+        compare_resolution_debug: dict[str, Any] = {
+            "rewritten_query": rewritten_query,
+            "follow_up_context_kind": (
+                inferred_follow_up_context.kind if inferred_follow_up_context else None
+            ),
+        }
 
-        if status == "no_documents_ingested":
-            return persist_and_return(
-                wrap_response(
-                    tenant_id=tenant_id,
-                    conversation_id=conversation_id,
-                    query=original_query,
-                    mode="hard_refusal",
-                    answer="There are no documents available yet to answer this question.",
-                    citations=[],
-                    artifacts=scoped_artifacts({"reason": "no_documents_ingested"}),
-                    debug={"status": status} if payload.debug else None,
+        if explicit_compare_query:
+            raw_results, status = retrieve(
+                rewritten_query,
+                k=15,
+                tenant_id=tenant_id,
+                return_status=True,
+            )
+            raw_distance_results = dedupe_results(raw_results)
+
+            if status == "no_documents_ingested":
+                return persist_and_return(
+                    wrap_response(
+                        tenant_id=tenant_id,
+                        conversation_id=conversation_id,
+                        query=original_query,
+                        mode="hard_refusal",
+                        answer="There are no documents available yet to answer this question.",
+                        citations=[],
+                        artifacts=scoped_artifacts({"reason": "no_documents_ingested"}),
+                        debug={"status": status} if payload.debug else None,
+                    )
+                )
+
+            compare_sources = _resolve_compare_sources(original_query, raw_distance_results)
+            compare_focus_query = _normalize_compare_focus_query(
+                _strip_source_references_from_query(
+                    original_query,
+                    [source for source, _doc in compare_sources],
+                    raw_distance_results,
                 )
             )
+            _compare_field_key, compare_focus_phrase, _compare_field_aliases = _canonical_compare_field(compare_focus_query)
+            compare_resolution_debug["resolved_compare_sources"] = [
+                _source_display_name(source)
+                for source, _doc in compare_sources
+            ]
 
-        compare_sources = _resolve_compare_sources(original_query, raw_distance_results)
-        compare_focus_query = _clean_compare_focus_query(
-            _strip_source_references_from_query(
-                original_query,
-                [source for source, _doc in compare_sources],
-                raw_distance_results,
-            )
-        )
-        compare_focus_phrase = _extract_focus_phrase(compare_focus_query) or compare_focus_query
-
-        if len(compare_sources) != 2 or not compare_focus_phrase:
-            ambiguity_citations = build_citations(
-                _best_result_per_source(raw_distance_results)[:3],
-                original_query,
-            )
-            return persist_and_return(
-                wrap_response(
-                    tenant_id=tenant_id,
-                    conversation_id=conversation_id,
-                    query=original_query,
-                    mode="guided_fallback",
-                    answer="I can compare one field across two documents, but I need the two document names spelled out explicitly. Tell me which two documents to compare.",
-                    citations=ambiguity_citations,
-                    artifacts=scoped_artifacts({"reason": "compare_documents_needed"}),
-                    debug={
-                        "rewritten_query": rewritten_query,
-                        "compare_focus_query": compare_focus_query,
-                        "resolved_compare_sources": [
-                            _source_display_name(source)
-                            for source, _doc in compare_sources
-                        ],
-                    }
-                    if payload.debug
-                    else None,
+            if len(compare_sources) != 2 or not compare_focus_phrase:
+                ambiguity_citations = build_citations(
+                    _best_result_per_source(raw_distance_results)[:3],
+                    original_query,
                 )
+                return persist_and_return(
+                    wrap_response(
+                        tenant_id=tenant_id,
+                        conversation_id=conversation_id,
+                        query=original_query,
+                        mode="guided_fallback",
+                        answer="I can compare one field across two documents, but I need the two document names spelled out explicitly. Tell me which two documents to compare.",
+                        citations=ambiguity_citations,
+                        artifacts=scoped_artifacts({"reason": "compare_documents_needed"}),
+                        debug={
+                            **compare_resolution_debug,
+                            "compare_focus_query": compare_focus_query,
+                        }
+                        if payload.debug
+                        else None,
+                    )
+                )
+        else:
+            compare_sources = [
+                (
+                    source,
+                    SimpleNamespace(
+                        metadata={
+                            "source": source,
+                            "title": display_name,
+                        }
+                    ),
+                )
+                for source, display_name in inferred_compare_sources
+            ]
+            compare_focus_query = _normalize_compare_focus_query(original_query)
+            _compare_field_key, compare_focus_phrase, _compare_field_aliases = _canonical_compare_field(compare_focus_query)
+            compare_resolution_debug["resolved_compare_sources"] = [
+                display_name for _source, display_name in inferred_compare_sources
+            ]
+            compare_resolution_debug["anchor_query"] = (
+                inferred_follow_up_context.anchor_query
+                if inferred_follow_up_context
+                else None
             )
 
         compare_results: list[dict[str, Any]] = []
@@ -1843,12 +2343,13 @@ def query_docs(payload: QueryRequest, request: Request):
                         "reason": "compare_result",
                         "compare_field": compare_focus_phrase,
                         "compare_results": compare_results,
+                        "compare_sources": [item["source"] for item in compare_results],
                     }
                 ),
                 debug={
-                    "rewritten_query": rewritten_query,
+                    **compare_resolution_debug,
                     "compare_focus_query": compare_focus_query,
-                    "selected_source_ignored": bool(selected_source),
+                    "selected_source_ignored": bool(client_selected_source),
                     "resolved_compare_sources": [
                         _source_display_name(source)
                         for source, _doc in compare_sources

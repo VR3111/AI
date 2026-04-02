@@ -32,12 +32,20 @@ export interface QuerySubmitOptions {
   selectedSourceLabel?: string;
   activateScope?: boolean;
   workspaceScope?: WorkspaceScope;
+  followUpContextEnabled?: boolean;
+  compareFollowUpEnabled?: boolean;
 }
 
 export interface ConversationScopeMeta {
   source: string;
   label: string;
   mode: WorkspaceScope;
+}
+
+export interface ConversationCompareMeta {
+  sources: string[];
+  labels: string[];
+  field?: string;
 }
 
 // Backend response from POST /query
@@ -111,6 +119,7 @@ export interface Conversation {
   title?: string;
   turns?: ConversationTurn[];
   scope?: ConversationScopeMeta | null;
+  compare?: ConversationCompareMeta | null;
 }
 
 // Backend response from GET /tenants/{id}/documents

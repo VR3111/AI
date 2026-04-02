@@ -1,7 +1,8 @@
-import { Conversation, QuerySubmitOptions, WorkspaceScope } from '../types/api';
+import { Conversation, ConversationCompareMeta, QuerySubmitOptions, WorkspaceScope } from '../types/api';
 import { ResponseRenderer } from './ResponseRenderer';
 import { useState } from 'react';
 import { WorkspaceBanner } from './WorkspaceBanner';
+import { CompareBanner } from './CompareBanner';
 
 type ActiveScope = {
   label: string;
@@ -14,7 +15,9 @@ interface ConversationViewerProps {
   onSubmitQuery?: (query: string, options?: QuerySubmitOptions) => Promise<void>;
   isProcessing?: boolean;
   activeScope?: ActiveScope | null;
+  activeCompare?: ConversationCompareMeta | null;
   onClearScope?: () => void;
+  onClearCompareContext?: () => void;
   onExitDocumentWorkspace?: () => void;
   onNewDocumentWorkspaceChat?: () => void;
   onClearDocumentWorkspaceChat?: () => void;
@@ -26,7 +29,9 @@ export function ConversationViewer({
   onSubmitQuery,
   isProcessing = false,
   activeScope,
+  activeCompare,
   onClearScope,
+  onClearCompareContext,
   onExitDocumentWorkspace,
   onNewDocumentWorkspaceChat,
   onClearDocumentWorkspaceChat,
@@ -119,6 +124,13 @@ export function ConversationViewer({
               onExitDocumentWorkspace={onExitDocumentWorkspace}
               onNewDocumentWorkspaceChat={onNewDocumentWorkspaceChat}
               onClearDocumentWorkspaceChat={onClearDocumentWorkspaceChat}
+            />
+          )}
+
+          {activeCompare && !activeScope && (
+            <CompareBanner
+              compare={activeCompare}
+              onClear={onClearCompareContext}
             />
           )}
 
