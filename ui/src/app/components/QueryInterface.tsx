@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ConversationCompareMeta, QueryResponse, QuerySubmitOptions, WorkspaceScope } from '../types/api';
+import { ConversationCompareMeta, Document, QueryResponse, QuerySubmitOptions, WorkspaceScope } from '../types/api';
 import { ResponseRenderer } from './ResponseRenderer';
 import { WorkspaceBanner } from './WorkspaceBanner';
 import { CompareBanner } from './CompareBanner';
@@ -12,6 +12,7 @@ type ActiveScope = {
 interface QueryInterfaceProps {
   onSubmitQuery: (query: string, options?: QuerySubmitOptions) => Promise<void>;
   currentResponse: QueryResponse | null;
+  documents: Document[];
   isProcessing: boolean;
   submittedQuery?: string;
   activeScope?: ActiveScope | null;
@@ -26,6 +27,7 @@ interface QueryInterfaceProps {
 export function QueryInterface({
   onSubmitQuery,
   currentResponse,
+  documents,
   isProcessing,
   submittedQuery,
   activeScope,
@@ -120,6 +122,7 @@ export function QueryInterface({
               <div className="mb-1.5 text-[10px] uppercase tracking-[0.16em] text-muted-foreground lg:mb-3 lg:text-xs">System Response</div>
               <ResponseRenderer
                 response={currentResponse}
+                documents={documents}
                 submittedQuery={submittedQuery}
                 onSubmitQuery={onSubmitQuery}
                 isProcessing={isProcessing}

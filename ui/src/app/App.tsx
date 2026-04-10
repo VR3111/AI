@@ -451,6 +451,8 @@ function App() {
         conversationId,
         {
           selectedSource,
+          compareSources: options?.compareSources,
+          compareFocusQuery: options?.compareFocusQuery,
           workspaceScope,
           followUpContextEnabled,
           compareFollowUpEnabled,
@@ -1062,6 +1064,7 @@ function App() {
               <QueryInterface
                 onSubmitQuery={handleSubmitQuery}
                 currentResponse={currentResponse}
+                documents={documents}
                 isProcessing={isProcessing}
                 submittedQuery={submittedQuery}
                 activeScope={activeScope}
@@ -1075,6 +1078,7 @@ function App() {
             ) : selectedConversationDetail ? (
               <ConversationViewer
                 conversation={selectedConversationDetail}
+                documents={documents}
                 onClose={handleCloseConversation}
                 onSubmitQuery={handleSubmitQuery}
                 isProcessing={isProcessing}

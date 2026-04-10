@@ -76,6 +76,8 @@ CREATE TABLE IF NOT EXISTS document_analyses (
   analysis_version TEXT NOT NULL,
   status TEXT NOT NULL,
   parser_json TEXT NOT NULL,
+  metadata_json TEXT NOT NULL,
+  sections_json TEXT NOT NULL,
   clauses_json TEXT NOT NULL,
   entities_json TEXT NOT NULL,
   risks_json TEXT NOT NULL,
@@ -206,6 +208,14 @@ def _ensure_document_analysis_columns(conn: sqlite3.Connection) -> None:
         row["name"]
         for row in conn.execute("PRAGMA table_info(document_analyses)").fetchall()
     }
+    if columns and "metadata_json" not in columns:
+        conn.execute(
+            "ALTER TABLE document_analyses ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'"
+        )
+    if columns and "sections_json" not in columns:
+        conn.execute(
+            "ALTER TABLE document_analyses ADD COLUMN sections_json TEXT NOT NULL DEFAULT '[]'"
+        )
     if columns and "risks_json" not in columns:
         conn.execute(
             "ALTER TABLE document_analyses ADD COLUMN risks_json TEXT NOT NULL DEFAULT '[]'"
@@ -238,6 +248,29 @@ def init_db(tenant_id: str) -> str:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _decode_json(raw_value: Any, default: Any) -> Any:
+    if raw_value in (None, ""):
+        return default
+    try:
+        return json.loads(raw_value)
+    except (TypeError, json.JSONDecodeError):
+        return default
+
+
+def _hydrate_document_analysis(row: sqlite3.Row | None) -> Optional[Dict[str, Any]]:
+    if not row:
+        return None
+
+    payload = dict(row)
+    payload["parser"] = _decode_json(payload.pop("parser_json", None), {})
+    payload["metadata"] = _decode_json(payload.pop("metadata_json", None), {})
+    payload["sections"] = _decode_json(payload.pop("sections_json", None), [])
+    payload["clauses"] = _decode_json(payload.pop("clauses_json", None), [])
+    payload["entities"] = _decode_json(payload.pop("entities_json", None), [])
+    payload["risks"] = _decode_json(payload.pop("risks_json", None), [])
+    return payload
 
 
 # ----------------------------
@@ -351,7 +384,7 @@ def get_document_analysis(tenant_id: str, document_id: str) -> Optional[Dict[str
             """,
             (tenant_id, document_id),
         ).fetchone()
-        return dict(row) if row else None
+        return _hydrate_document_analysis(row)
     finally:
         conn.close()
 
@@ -368,6 +401,8 @@ def upsert_document_analysis(
     analysis_version: str,
     status: str,
     parser_payload: Dict[str, Any] | None,
+    metadata_payload: Dict[str, Any] | None,
+    sections: list[Dict[str, Any]] | None,
     clauses: list[Dict[str, Any]] | None,
     entities: list[Dict[str, Any]] | None,
     risks: list[Dict[str, Any]] | None = None,
@@ -378,6 +413,8 @@ def upsert_document_analysis(
     now = _now_iso()
 
     parser_json = json.dumps(parser_payload or {}, ensure_ascii=False)
+    metadata_json = json.dumps(metadata_payload or {}, ensure_ascii=False)
+    sections_json = json.dumps(sections or [], ensure_ascii=False)
     clauses_json = json.dumps(clauses or [], ensure_ascii=False)
     entities_json = json.dumps(entities or [], ensure_ascii=False)
     risks_json = json.dumps(risks or [], ensure_ascii=False)
@@ -388,10 +425,11 @@ def upsert_document_analysis(
             INSERT INTO document_analyses (
               tenant_id, document_id, filename, source_path, source_sha256,
               file_size_bytes, file_mtime, analysis_version, status,
-              parser_json, clauses_json, entities_json, risks_json, error_message,
+              parser_json, metadata_json, sections_json, clauses_json, entities_json,
+              risks_json, error_message,
               created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(tenant_id, document_id) DO UPDATE SET
               filename = excluded.filename,
               source_path = excluded.source_path,
@@ -401,6 +439,8 @@ def upsert_document_analysis(
               analysis_version = excluded.analysis_version,
               status = excluded.status,
               parser_json = excluded.parser_json,
+              metadata_json = excluded.metadata_json,
+              sections_json = excluded.sections_json,
               clauses_json = excluded.clauses_json,
               entities_json = excluded.entities_json,
               risks_json = excluded.risks_json,
@@ -418,6 +458,8 @@ def upsert_document_analysis(
                 analysis_version,
                 status,
                 parser_json,
+                metadata_json,
+                sections_json,
                 clauses_json,
                 entities_json,
                 risks_json,

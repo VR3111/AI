@@ -1,17 +1,21 @@
 import {
   CompareResultItem,
+  Document,
   MatchedDocumentOption,
   QueryResponse,
   QuerySubmitOptions,
 } from "../types/api";
 import { Tooltip } from "./Tooltip";
 import { useMemo, useState } from "react";
+import { ComparePicker } from "./ComparePicker";
 
 interface ResponseRendererProps {
   response: QueryResponse;
+  documents?: Document[];
   submittedQuery?: string;
   onSubmitQuery?: (query: string, options?: QuerySubmitOptions) => Promise<void>;
   isProcessing?: boolean;
+  showComparePicker?: boolean;
 }
 
 function getFilenameFromSource(source?: string) {
@@ -67,9 +71,11 @@ function isCompactCompareValue(value: string) {
 
 export function ResponseRenderer({
   response,
+  documents = [],
   submittedQuery,
   onSubmitQuery,
   isProcessing = false,
+  showComparePicker = true,
 }: ResponseRendererProps) {
   const [citationsOpen, setCitationsOpen] = useState(false);
 
@@ -92,6 +98,11 @@ export function ResponseRenderer({
     response.mode === "guided_fallback" &&
     response.artifacts?.reason === "multiple_documents_match" &&
     matchedDocuments.length > 0;
+  const comparePicker = response.artifacts?.compare_picker;
+  const showsComparePicker =
+    showComparePicker &&
+    response.artifacts?.reason === "compare_picker" &&
+    Boolean(comparePicker);
 
   const accent = useMemo(() => {
     if (response.mode === "direct_answer") return "emerald";
@@ -388,9 +399,21 @@ export function ResponseRenderer({
               {isCompareResult ? (
                 renderCompareResults()
               ) : (
-                <div className="mb-2.5 whitespace-pre-wrap text-[14px] leading-6 text-foreground lg:mb-4 lg:text-base lg:leading-relaxed">
-                  {response.answer}
-                </div>
+                <>
+                  <div className="mb-2.5 whitespace-pre-wrap text-[14px] leading-6 text-foreground lg:mb-4 lg:text-base lg:leading-relaxed">
+                    {response.answer}
+                  </div>
+                  {showsComparePicker && submittedQuery && (
+                    <ComparePicker
+                      picker={comparePicker!}
+                      documents={documents}
+                      query={submittedQuery}
+                      compareFocusQuery={response.artifacts?.compare_focus_query}
+                      onSubmitQuery={onSubmitQuery}
+                      isProcessing={isProcessing}
+                    />
+                  )}
+                </>
               )}
             </div>
 
@@ -500,6 +523,17 @@ export function ResponseRenderer({
                   ))}
                 </div>
               </div>
+            )}
+
+            {showsComparePicker && submittedQuery && (
+              <ComparePicker
+                picker={comparePicker!}
+                documents={documents}
+                query={submittedQuery}
+                compareFocusQuery={response.artifacts?.compare_focus_query}
+                onSubmitQuery={onSubmitQuery}
+                isProcessing={isProcessing}
+              />
             )}
 
             {renderCitations()}

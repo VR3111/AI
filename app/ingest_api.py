@@ -12,6 +12,7 @@ from app.persist import (
     upsert_document_analysis,
 )
 from app.store_vectors import load_and_chunk, store_vectors
+from app.structure_engine import build_document_metadata, extract_sections
 
 # =====================================================
 # Logger
@@ -58,17 +59,29 @@ def _file_sha256(file_path: str) -> str:
     return digest.hexdigest()
 
 
-def _run_structured_analysis(tenant_id: str) -> None:
+def _run_structured_analysis(
+    tenant_id: str,
+    document_ids: set[str] | None = None,
+) -> None:
     try:
         from app.clause_engine import extract_clauses
         from app.document_parser import parse_document, STRUCTURED_ANALYSIS_VERSION
         from app.entity_engine import extract_entities
 
-        pdf_paths = _pdf_paths(tenant_id)
-        prune_document_analyses(
-            tenant_id,
-            {os.path.basename(file_path) for file_path in pdf_paths},
-        )
+        all_pdf_paths = _pdf_paths(tenant_id)
+        if document_ids is None:
+            pdf_paths = all_pdf_paths
+            prune_document_analyses(
+                tenant_id,
+                {os.path.basename(file_path) for file_path in all_pdf_paths},
+            )
+        else:
+            normalized_ids = {str(document_id) for document_id in document_ids}
+            pdf_paths = [
+                file_path
+                for file_path in all_pdf_paths
+                if os.path.basename(file_path) in normalized_ids
+            ]
     except Exception:
         logger.exception(
             "Structured analysis setup failed",
@@ -108,28 +121,39 @@ def _run_structured_analysis(tenant_id: str) -> None:
                 "Structured analysis clause extraction start",
                 extra={"tenant_id": tenant_id, "document_id": filename},
             )
-            clauses = extract_clauses(parsed_document)
+            sections = extract_sections(parsed_document)
+            clauses = extract_clauses(parsed_document, sections)
 
             logger.info(
                 "Structured analysis entity extraction start",
                 extra={"tenant_id": tenant_id, "document_id": filename},
             )
-            entities = extract_entities(parsed_document)
+            entities = extract_entities(parsed_document, sections)
+            metadata_payload = build_document_metadata(
+                parsed_document,
+                sections,
+                clauses,
+                entities,
+            )
             risks: list[dict] = []
 
-            try:
-                from app.risk_engine import extract_risks
+            if (
+                os.getenv("P1_ENABLE_LLM_RISK_ANALYSIS", "false").lower() == "true"
+                and os.getenv("TOGETHER_API_KEY")
+            ):
+                try:
+                    from app.risk_engine import extract_risks
 
-                logger.info(
-                    "Structured analysis risk extraction start",
-                    extra={"tenant_id": tenant_id, "document_id": filename},
-                )
-                risks = extract_risks(parsed_document, clauses, entities)
-            except Exception:
-                logger.exception(
-                    "Structured analysis risk extraction failed",
-                    extra={"tenant_id": tenant_id, "document_id": filename},
-                )
+                    logger.info(
+                        "Structured analysis risk extraction start",
+                        extra={"tenant_id": tenant_id, "document_id": filename},
+                    )
+                    risks = extract_risks(parsed_document, clauses, entities)
+                except Exception:
+                    logger.exception(
+                        "Structured analysis risk extraction failed",
+                        extra={"tenant_id": tenant_id, "document_id": filename},
+                    )
 
             upsert_document_analysis(
                 tenant_id=tenant_id,
@@ -142,6 +166,8 @@ def _run_structured_analysis(tenant_id: str) -> None:
                 analysis_version=STRUCTURED_ANALYSIS_VERSION,
                 status="completed",
                 parser_payload=parsed_document,
+                metadata_payload=metadata_payload,
+                sections=sections,
                 clauses=clauses,
                 entities=entities,
                 risks=risks,
@@ -152,6 +178,7 @@ def _run_structured_analysis(tenant_id: str) -> None:
                 extra={
                     "tenant_id": tenant_id,
                     "document_id": filename,
+                    "section_count": len(sections),
                     "clause_count": len(clauses),
                     "entity_count": len(entities),
                     "risk_count": len(risks),
@@ -170,6 +197,8 @@ def _run_structured_analysis(tenant_id: str) -> None:
                     analysis_version=STRUCTURED_ANALYSIS_VERSION,
                     status="failed",
                     parser_payload=parsed_document,
+                    metadata_payload={},
+                    sections=[],
                     clauses=[],
                     entities=[],
                     risks=[],
@@ -218,7 +247,7 @@ def upload_document(tenant_id: str, file: UploadFile = File(...)):
         # Auto-index (all docs for tenant)
         chunks = load_and_chunk(tenant_id)
         store_vectors(tenant_id, chunks)
-        _run_structured_analysis(tenant_id)
+        _run_structured_analysis(tenant_id, {file.filename})
 
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))

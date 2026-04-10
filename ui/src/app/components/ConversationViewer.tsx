@@ -1,4 +1,4 @@
-import { Conversation, ConversationCompareMeta, QuerySubmitOptions, WorkspaceScope } from '../types/api';
+import { Conversation, ConversationCompareMeta, Document, QuerySubmitOptions, WorkspaceScope } from '../types/api';
 import { ResponseRenderer } from './ResponseRenderer';
 import { useState } from 'react';
 import { WorkspaceBanner } from './WorkspaceBanner';
@@ -11,6 +11,7 @@ type ActiveScope = {
 
 interface ConversationViewerProps {
   conversation: Conversation;
+  documents: Document[];
   onClose: () => void;
   onSubmitQuery?: (query: string, options?: QuerySubmitOptions) => Promise<void>;
   isProcessing?: boolean;
@@ -25,6 +26,7 @@ interface ConversationViewerProps {
 
 export function ConversationViewer({
   conversation,
+  documents,
   onClose,
   onSubmitQuery,
   isProcessing = false,
@@ -188,9 +190,11 @@ export function ConversationViewer({
                 <div className="mb-1.5 text-[10px] uppercase tracking-[0.16em] text-muted-foreground lg:mb-3 lg:text-xs">System Response</div>
                 <ResponseRenderer
                   response={turn.response}
+                  documents={documents}
                   submittedQuery={turn.query}
                   onSubmitQuery={onSubmitQuery}
                   isProcessing={isProcessing}
+                  showComparePicker={idx === conversation.turns.length - 1}
                 />
               </div>
             </div>

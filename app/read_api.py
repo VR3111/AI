@@ -2,7 +2,7 @@ import os
 import sqlite3
 import json
 from fastapi import APIRouter, Request, HTTPException
-from app.persist import generate_conversation_title
+from app.persist import generate_conversation_title, get_document_analysis
 
 # =====================================================
 # Router
@@ -205,6 +205,30 @@ def get_conversation(conversation_id: str, request: Request):
         }
     finally:
         conn.close()
+
+
+@router.get("/documents/{document_id}/structure")
+def get_document_structure(document_id: str, request: Request):
+    tenant_id = request.state.tenant_id
+    analysis = get_document_analysis(tenant_id, document_id)
+
+    if not analysis:
+        raise HTTPException(status_code=404, detail="Structured document not found")
+
+    return {
+        "tenant_id": tenant_id,
+        "document_id": document_id,
+        "filename": analysis.get("filename"),
+        "status": analysis.get("status"),
+        "analysis_version": analysis.get("analysis_version"),
+        "updated_at": analysis.get("updated_at"),
+        "error_message": analysis.get("error_message"),
+        "metadata": analysis.get("metadata") or {},
+        "sections": analysis.get("sections") or [],
+        "clauses": analysis.get("clauses") or [],
+        "entities": analysis.get("entities") or [],
+        "risks": analysis.get("risks") or [],
+    }
 
 
 @router.delete("/conversations/{conversation_id}")

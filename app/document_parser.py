@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from langchain_community.document_loaders import PyPDFLoader
 
-STRUCTURED_ANALYSIS_VERSION = "2"
+STRUCTURED_ANALYSIS_VERSION = "3"
 
 
 def _normalize_text(text: str) -> str:

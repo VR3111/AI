@@ -27,9 +27,33 @@ export interface CompareResultItem {
   found: boolean;
 }
 
+export interface ComparePickerCandidate {
+  source: string;
+  display_name: string;
+  confidence: "high" | "medium" | "low";
+  matched_alias?: string | null;
+  retrieval_score?: number;
+}
+
+export interface ComparePickerSide {
+  source: string;
+  display_name: string;
+  confidence: "high" | "medium" | "low";
+  matched_alias?: string | null;
+}
+
+export interface ComparePickerState {
+  left?: ComparePickerSide | null;
+  right?: ComparePickerSide | null;
+  candidates?: ComparePickerCandidate[];
+  can_submit?: boolean;
+}
+
 export interface QuerySubmitOptions {
   selectedSource?: string;
   selectedSourceLabel?: string;
+  compareSources?: string[];
+  compareFocusQuery?: string;
   activateScope?: boolean;
   workspaceScope?: WorkspaceScope;
   followUpContextEnabled?: boolean;
@@ -63,7 +87,9 @@ export interface QueryResponse {
     additional_resources?: any[];
     best_score?: number;
     compare_field?: string;
+    compare_focus_query?: string;
     compare_results?: CompareResultItem[];
+    compare_picker?: ComparePickerState;
     matched_documents?: string[];
     matched_document_options?: MatchedDocumentOption[];
     selected_source?: string;

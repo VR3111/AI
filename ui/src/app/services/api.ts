@@ -388,6 +388,8 @@ export const api = {
         query,
         conversation_id: convId,
         selected_source: options?.selectedSource,
+        compare_sources: options?.compareSources,
+        compare_focus_query: options?.compareFocusQuery,
         workspace_scope: options?.workspaceScope ?? "global",
         follow_up_context: options?.followUpContextEnabled ?? true,
         compare_follow_up: options?.compareFollowUpEnabled ?? true,

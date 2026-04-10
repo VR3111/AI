@@ -419,6 +419,8 @@ class QueryRequest(BaseModel):
     conversation_id: str
     tenant_id: Optional[str] = None
     selected_source: Optional[str] = None
+    compare_sources: Optional[list[str]] = None
+    compare_focus_query: Optional[str] = None
     workspace_scope: Optional[str] = None
     follow_up_context: Optional[bool] = True
     compare_follow_up: Optional[bool] = True
@@ -601,6 +603,8 @@ TRUSTED_BRAND_ALIASES = {
     "american express": {"amex"},
     "discover": {"discover"},
     "prime": {"prime"},
+    "citibank": {"citi"},
+    "citi": {"citibank"},
 }
 
 
@@ -1020,6 +1024,32 @@ def _source_display_name(source: Any) -> str:
     return os.path.basename(source_text)
 
 
+def _tenant_docs_path(tenant_id: str) -> str:
+    return os.path.join("data", "tenants", tenant_id, "docs")
+
+
+def _tenant_document_sources(tenant_id: str) -> list[str]:
+    docs_path = _tenant_docs_path(tenant_id)
+    if not os.path.isdir(docs_path):
+        return []
+    return sorted(
+        os.path.join(docs_path, filename)
+        for filename in os.listdir(docs_path)
+        if filename.lower().endswith(".pdf")
+    )
+
+
+def _sanitize_compare_sources(tenant_id: str, raw_sources: list[str] | None) -> list[str]:
+    allowed_sources = set(_tenant_document_sources(tenant_id))
+    selected_sources: list[str] = []
+    for source in list(raw_sources or []):
+        source_text = str(source or "").strip()
+        if not source_text or source_text not in allowed_sources or source_text in selected_sources:
+            continue
+        selected_sources.append(source_text)
+    return selected_sources[:2]
+
+
 def _artifacts_workspace_scope(artifacts: dict[str, Any]) -> str:
     workspace_scope = str(artifacts.get("workspace_scope") or "global").strip().lower()
     return workspace_scope if workspace_scope in {"global", "document"} else "global"
@@ -1091,7 +1121,7 @@ def _turn_blocks_follow_up_context(turn: ConversationTurnRecord) -> bool:
         return True
 
     reason = str(turn.artifacts.get("reason") or "").strip().lower()
-    return reason in {"reset", "multiple_documents_match", "compare_documents_needed"}
+    return reason in {"reset", "multiple_documents_match", "compare_documents_needed", "compare_picker"}
 
 
 def _turn_ends_active_follow_up_context(turn: ConversationTurnRecord) -> bool:
@@ -1257,29 +1287,9 @@ def _trusted_brand_aliases_from_docs(docs: list[Any]) -> set[str]:
         for doc in docs
         for term in _document_query_terms(doc)
     )
-    combined_text = " ".join(
-        _normalize_source_match_text(doc.page_content or "")
-        for doc in docs[:8]
-    )
 
     for brand_phrase, brand_aliases in TRUSTED_BRAND_ALIASES.items():
         if brand_phrase in combined_terms:
-            alias_matches.update(brand_aliases)
-            continue
-
-        occurrence_count = combined_text.count(brand_phrase)
-        has_context = any(
-            phrase in combined_text
-            for phrase in (
-                f"{brand_phrase} card",
-                f"choosing {brand_phrase}",
-                f"{brand_phrase} bank",
-                f"{brand_phrase} refer",
-                f"{brand_phrase} account",
-                f"{brand_phrase} agreement",
-            )
-        )
-        if occurrence_count >= 2 or (occurrence_count >= 1 and has_context):
             alias_matches.update(brand_aliases)
 
     return alias_matches
@@ -1335,9 +1345,13 @@ def _resolve_compare_sources(
             alias_score = len(compact_alias)
             if " " in alias:
                 alias_score += 2
-            if alias_score > best_match_score or (
-                alias_score == best_match_score
-                and (best_match_position is None or match_position < best_match_position)
+            if (
+                best_match_position is None
+                or match_position < best_match_position
+                or (
+                    match_position == best_match_position
+                    and alias_score > best_match_score
+                )
             ):
                 best_match_score = alias_score
                 best_match_position = match_position
@@ -1347,6 +1361,314 @@ def _resolve_compare_sources(
 
     matches.sort(key=lambda item: (item[0], item[1], _source_display_name(item[2]).lower()))
     return [(source, doc) for _position, _neg_score, source, doc in matches]
+
+
+def _best_retrieval_score_by_source(results: list[tuple[Any, float]]) -> dict[str, float]:
+    best_scores: dict[str, float] = {}
+    for doc, score in results:
+        source = str(doc.metadata.get("source") or "")
+        if not source:
+            continue
+        current = best_scores.get(source)
+        if current is None or score < current:
+            best_scores[source] = score
+    return best_scores
+
+
+def _stub_doc_for_source(source: str) -> Any:
+    return SimpleNamespace(
+        page_content="",
+        metadata={
+            "source": source,
+            "title": _source_display_name(source),
+        },
+    )
+
+
+def _compare_confidence_rank(confidence: str) -> int:
+    if confidence == "high":
+        return 0
+    if confidence == "medium":
+        return 1
+    return 2
+
+
+def _build_compare_resolution(
+    query: str,
+    results: list[tuple[Any, float]],
+    *,
+    tenant_id: str | None = None,
+) -> dict[str, Any]:
+    normalized_query = _normalize_source_match_text(query)
+    grouped_docs = _docs_by_source(results)
+    first_docs = _unique_source_docs(results)
+    if tenant_id:
+        for source in _tenant_document_sources(tenant_id):
+            if source not in grouped_docs:
+                grouped_docs[source] = [_stub_doc_for_source(source)]
+            if source not in first_docs:
+                first_docs[source] = grouped_docs[source][0]
+    best_scores = _best_retrieval_score_by_source(results)
+    grouped_matches: dict[int, list[dict[str, Any]]] = {}
+    unmatched_candidates: list[dict[str, Any]] = []
+
+    for source, docs in grouped_docs.items():
+        doc = first_docs.get(source)
+        if doc is None:
+            continue
+
+        best_alias = ""
+        best_alias_score = 0
+        best_match_position: int | None = None
+        for alias in _source_match_aliases(docs):
+            compact_alias = alias.replace(" ", "")
+            if len(compact_alias) < 4:
+                continue
+            match_position = _alias_match_position(normalized_query, alias)
+            if match_position is None:
+                continue
+
+            alias_score = len(compact_alias)
+            if " " in alias:
+                alias_score += 2
+            if any(alias in aliases for aliases in TRUSTED_BRAND_ALIASES.values()):
+                alias_score += 1
+            if (
+                best_match_position is None
+                or match_position < best_match_position
+                or (
+                    match_position == best_match_position
+                    and alias_score > best_alias_score
+                )
+            ):
+                best_alias = alias
+                best_alias_score = alias_score
+                best_match_position = match_position
+
+        candidate = {
+            "source": source,
+            "doc": doc,
+            "display_name": _source_display_name(source),
+            "retrieval_score": float(best_scores.get(source, 99.0)),
+            "matched_alias": best_alias or None,
+            "alias_score": best_alias_score,
+            "match_position": best_match_position,
+            "confidence": "low",
+        }
+        if best_match_position is None:
+            unmatched_candidates.append(candidate)
+        else:
+            grouped_matches.setdefault(best_match_position, []).append(candidate)
+
+    confident_sources: list[dict[str, Any]] = []
+    ordered_candidates: list[dict[str, Any]] = []
+
+    for position in sorted(grouped_matches):
+        candidates = sorted(
+            grouped_matches[position],
+            key=lambda item: (
+                -int(item["alias_score"]),
+                float(item["retrieval_score"]),
+                str(item["display_name"]).lower(),
+            ),
+        )
+        top = candidates[0]
+        runner_up = candidates[1] if len(candidates) > 1 else None
+        top_score = int(top["alias_score"])
+        runner_score = int(runner_up["alias_score"]) if runner_up else -1
+        retrieval_margin = (
+            float(runner_up["retrieval_score"]) - float(top["retrieval_score"])
+            if runner_up
+            else None
+        )
+
+        confidence = "medium"
+        if top_score >= 4 and (
+            runner_up is None
+            or top_score - runner_score >= 3
+            or (
+                top_score > runner_score
+                and retrieval_margin is not None
+                and retrieval_margin >= 0.12
+            )
+        ):
+            confidence = "high"
+        elif top_score < 4:
+            confidence = "low"
+
+        top["confidence"] = confidence
+        ordered_candidates.append(top)
+        if confidence == "high":
+            confident_sources.append(top)
+        for candidate in candidates[1:]:
+            candidate["confidence"] = "low"
+            ordered_candidates.append(candidate)
+
+    ordered_candidates.extend(
+        sorted(
+            unmatched_candidates,
+            key=lambda item: (
+                float(item["retrieval_score"]),
+                str(item["display_name"]).lower(),
+            ),
+        )
+    )
+
+    picker_candidates: list[dict[str, Any]] = []
+    seen_sources: set[str] = set()
+    for candidate in sorted(
+        ordered_candidates,
+        key=lambda item: (
+            _compare_confidence_rank(str(item["confidence"])),
+            int(item["match_position"]) if item["match_position"] is not None else 10**9,
+            float(item["retrieval_score"]),
+            -int(item["alias_score"]),
+            str(item["display_name"]).lower(),
+        ),
+    ):
+        source = str(candidate["source"])
+        if not source or source in seen_sources:
+            continue
+        seen_sources.add(source)
+        picker_candidates.append(
+            {
+                "source": source,
+                "display_name": str(candidate["display_name"]),
+                "confidence": str(candidate["confidence"]),
+                "matched_alias": candidate["matched_alias"],
+                "retrieval_score": round(float(candidate["retrieval_score"]), 4),
+            }
+        )
+
+    auto_sources: list[tuple[str, Any]] = []
+    if len(confident_sources) >= 2:
+        for candidate in confident_sources[:2]:
+            auto_sources.append((str(candidate["source"]), candidate["doc"]))
+
+    picker_selection: list[dict[str, Any]] = []
+    if len(confident_sources) == 1:
+        picker_selection.append(confident_sources[0])
+    else:
+        if confident_sources:
+            picker_selection.append(confident_sources[0])
+
+        for candidate in picker_candidates:
+            if any(
+                str(existing["source"]) == str(candidate["source"])
+                for existing in picker_selection
+            ):
+                continue
+            matching_candidate = next(
+                (
+                    item
+                    for item in ordered_candidates
+                    if str(item["source"]) == str(candidate["source"])
+                ),
+                None,
+            )
+            if matching_candidate is not None:
+                picker_selection.append(matching_candidate)
+            if len(picker_selection) >= 2:
+                break
+
+    left_candidate = picker_selection[0] if picker_selection else None
+    right_candidate = picker_selection[1] if len(picker_selection) > 1 else None
+
+    return {
+        "auto_sources": auto_sources,
+        "confident_sources": [
+            {
+                "source": str(candidate["source"]),
+                "display_name": str(candidate["display_name"]),
+                "confidence": str(candidate["confidence"]),
+                "matched_alias": candidate.get("matched_alias"),
+            }
+            for candidate in confident_sources
+        ],
+        "picker_candidates": picker_candidates[:8],
+        "picker_left": {
+            "source": str(left_candidate["source"]),
+            "display_name": str(left_candidate["display_name"]),
+            "confidence": str(left_candidate["confidence"]),
+            "matched_alias": left_candidate.get("matched_alias"),
+        }
+        if left_candidate
+        else None,
+        "picker_right": {
+            "source": str(right_candidate["source"]),
+            "display_name": str(right_candidate["display_name"]),
+            "confidence": str(right_candidate["confidence"]),
+            "matched_alias": right_candidate.get("matched_alias"),
+        }
+        if right_candidate
+        else None,
+        "resolved_sources": [
+            {
+                "source": str(candidate["source"]),
+                "display_name": str(candidate["display_name"]),
+                "confidence": str(candidate["confidence"]),
+                "matched_alias": candidate.get("matched_alias"),
+            }
+            for candidate in confident_sources[:2]
+        ],
+    }
+
+
+def _compare_debug_source_identity(
+    *,
+    source: str,
+    title: str | None = None,
+    retrieval_score: float | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "source": source,
+        "display_name": _source_display_name(source),
+        "normalized_source_id": _normalize_source_match_text(
+            _source_display_name(source)
+        ),
+    }
+    if title:
+        payload["title"] = title
+        payload["normalized_title"] = _normalize_source_match_text(title)
+    if retrieval_score is not None:
+        payload["retrieval_score"] = round(float(retrieval_score), 4)
+    return payload
+
+
+def _serialize_compare_resolution_debug(
+    resolution: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "confident_sources": list(resolution.get("confident_sources") or []),
+        "auto_sources": [
+            _compare_debug_source_identity(
+                source=str(source),
+                title=str(getattr(doc, "metadata", {}).get("title") or "").strip() or None,
+            )
+            for source, doc in list(resolution.get("auto_sources") or [])
+        ],
+        "picker_left": resolution.get("picker_left"),
+        "picker_right": resolution.get("picker_right"),
+        "picker_candidates": list(resolution.get("picker_candidates") or []),
+    }
+
+
+def _compare_retrieval_hit_debug(results: list[tuple[Any, float]]) -> list[dict[str, Any]]:
+    seen_sources: set[str] = set()
+    debug_hits: list[dict[str, Any]] = []
+    for doc, score in results:
+        source = str(doc.metadata.get("source") or "").strip()
+        if not source or source in seen_sources:
+            continue
+        seen_sources.add(source)
+        debug_hits.append(
+            _compare_debug_source_identity(
+                source=source,
+                title=str(doc.metadata.get("title") or "").strip() or None,
+                retrieval_score=score,
+            )
+        )
+    return debug_hits
 
 
 def _strip_document_references_from_query(query: str, docs: list[Any]) -> str:
@@ -1422,6 +1744,26 @@ def _normalize_compare_focus_query(query: str) -> str:
     cleaned = re.sub(r"^\s*(?:the|any)\b\s+", "", cleaned, flags=re.I)
     cleaned = re.sub(r"\s+", " ", cleaned)
     return cleaned.strip(" .,:;?") or query.strip()
+
+
+def _compare_focus_query_from_sources(
+    *,
+    query: str,
+    sources: list[str],
+    requested_focus_query: str | None = None,
+) -> str:
+    requested = str(requested_focus_query or "").strip()
+    if requested:
+        return _normalize_compare_focus_query(requested)
+
+    if sources:
+        stripped_query = _strip_document_references_from_query(
+            query,
+            [_stub_doc_for_source(source) for source in sources],
+        )
+        return _normalize_compare_focus_query(stripped_query)
+
+    return _normalize_compare_focus_query(query)
 
 
 def _strip_document_reference_from_query(query: str, doc: Any) -> str:
@@ -1967,6 +2309,43 @@ def _build_document_workspace_compare_answer(
     )
 
 
+def _compare_subject_label(source: str) -> str:
+    display_name = _source_display_name(source)
+    readable_name = re.sub(r"\.[a-z0-9]+$", "", display_name, flags=re.I)
+    readable_name = re.sub(r"[-_]+", " ", readable_name)
+    readable_name = re.sub(r"\s+", " ", readable_name).strip()
+    lowered = readable_name.lower()
+    if "american express" in lowered or "amex" in lowered:
+        return "Amex"
+    if "discover" in lowered:
+        return "Discover"
+    if "prime" in lowered:
+        return "Prime"
+    if "citibank" in lowered or "citi" in lowered:
+        return "Citi"
+    return readable_name.title() if readable_name else "This document"
+
+
+def _build_single_source_compare_answer(
+    *,
+    source: str,
+    compare_focus_query: str,
+    field_value: str,
+) -> str:
+    subject_label = _compare_subject_label(source)
+    focus_label = _extract_focus_phrase(compare_focus_query) or compare_focus_query.strip().lower()
+    focus_label = focus_label.strip(" .,:;?")
+    compact_value = _compact_field_answer_value(field_value)
+
+    if not compact_value or not focus_label:
+        return field_value
+
+    if compact_value == "none":
+        return f"{subject_label} has no {focus_label}."
+
+    return f"{subject_label} {focus_label} is {compact_value}."
+
+
 def _compact_field_answer_value(value: str) -> str:
     compact = re.sub(r"\s+", " ", str(value or "")).strip()
     if not compact:
@@ -2026,6 +2405,11 @@ def query_docs(payload: QueryRequest, request: Request):
     explicit_compare_query = _is_explicit_compare_query(original_query)
     follow_up_context_enabled = payload.follow_up_context is not False
     compare_follow_up_enabled = payload.compare_follow_up is not False
+    requested_compare_sources = _sanitize_compare_sources(
+        tenant_id,
+        payload.compare_sources,
+    )
+    requested_compare_focus_query = str(payload.compare_focus_query or "").strip() or None
     conversation_turns = (
         get_recent_conversation_turns(tenant_id, conversation_id)
         if conversation_id
@@ -2236,7 +2620,34 @@ def query_docs(payload: QueryRequest, request: Request):
             ),
         }
 
-        if explicit_compare_query:
+        if requested_compare_sources:
+            compare_sources = [
+                (
+                    source,
+                    SimpleNamespace(
+                        metadata={
+                            "source": source,
+                            "title": _source_display_name(source),
+                        }
+                    ),
+                )
+                for source in requested_compare_sources
+            ]
+            compare_focus_query = _compare_focus_query_from_sources(
+                query=original_query,
+                sources=requested_compare_sources,
+                requested_focus_query=requested_compare_focus_query,
+            )
+            _compare_field_key, compare_focus_phrase, _compare_field_aliases = _canonical_compare_field(compare_focus_query)
+            compare_resolution_debug["resolved_compare_sources"] = [
+                _source_display_name(source)
+                for source, _doc in compare_sources
+            ]
+            compare_resolution_debug["compare_sources_from_picker"] = True
+            compare_resolution_debug["compare_focus_query_from_picker"] = bool(
+                requested_compare_focus_query
+            )
+        elif explicit_compare_query:
             raw_results, status = retrieve(
                 rewritten_query,
                 k=15,
@@ -2259,7 +2670,12 @@ def query_docs(payload: QueryRequest, request: Request):
                     )
                 )
 
-            compare_sources = _resolve_compare_sources(original_query, raw_distance_results)
+            compare_resolution = _build_compare_resolution(
+                original_query,
+                raw_distance_results,
+                tenant_id=tenant_id,
+            )
+            compare_sources = compare_resolution["auto_sources"]
             compare_focus_query = _normalize_compare_focus_query(
                 _strip_source_references_from_query(
                     original_query,
@@ -2272,24 +2688,135 @@ def query_docs(payload: QueryRequest, request: Request):
                 _source_display_name(source)
                 for source, _doc in compare_sources
             ]
+            compare_resolution_debug["compare_picker_candidates"] = [
+                candidate["display_name"]
+                for candidate in compare_resolution["picker_candidates"]
+            ]
+            compare_resolution_debug["confident_sources"] = [
+                candidate["display_name"]
+                for candidate in compare_resolution["confident_sources"]
+            ]
+            compare_resolution_debug["auto_sources"] = [
+                _source_display_name(source)
+                for source, _doc in compare_resolution["auto_sources"]
+            ]
+            if payload.debug:
+                compare_resolution_debug["compare_resolution"] = (
+                    _serialize_compare_resolution_debug(compare_resolution)
+                )
+                compare_resolution_debug["tenant_catalog_sources"] = [
+                    _compare_debug_source_identity(source=source)
+                    for source in _tenant_document_sources(tenant_id)
+                ]
+                compare_resolution_debug["retrieval_hit_sources"] = (
+                    _compare_retrieval_hit_debug(raw_distance_results)
+                )
+
+            if len(compare_resolution["confident_sources"]) == 1 and compare_focus_phrase:
+                resolved_source = str(compare_resolution["confident_sources"][0]["source"])
+                single_source_compare_focus_query = _normalize_compare_focus_query(
+                    _strip_source_references_from_query(
+                        original_query,
+                        [resolved_source],
+                        raw_distance_results,
+                    )
+                )
+                single_result, single_evidence_results = _compare_result_for_source(
+                    tenant_id=tenant_id,
+                    source=resolved_source,
+                    compare_query=single_source_compare_focus_query,
+                )
+                picker_left = {
+                    "source": resolved_source,
+                    "display_name": _source_display_name(resolved_source),
+                    "confidence": "high",
+                    "matched_alias": compare_resolution["confident_sources"][0].get("matched_alias"),
+                }
+                picker_right = compare_resolution["picker_right"]
+                compare_picker = {
+                    "left": picker_left,
+                    "right": picker_right,
+                    "candidates": compare_resolution["picker_candidates"],
+                    "can_submit": True,
+                }
+
+                if single_result.get("found") and single_result.get("value"):
+                    return persist_and_return(
+                        wrap_response(
+                            tenant_id=tenant_id,
+                            conversation_id=conversation_id,
+                            query=original_query,
+                            mode="direct_answer",
+                            answer=_build_single_source_compare_answer(
+                                source=resolved_source,
+                                compare_focus_query=single_source_compare_focus_query,
+                                field_value=str(single_result["value"]),
+                            ),
+                            citations=build_citations(
+                                single_evidence_results,
+                                single_source_compare_focus_query,
+                            ),
+                            artifacts=scoped_artifacts(
+                                {
+                                    "reason": "compare_picker",
+                                    "compare_field": _extract_focus_phrase(single_source_compare_focus_query)
+                                    or single_source_compare_focus_query,
+                                    "compare_focus_query": single_source_compare_focus_query,
+                                    "compare_picker": compare_picker,
+                                }
+                            ),
+                            debug={
+                                **compare_resolution_debug,
+                                "compare_focus_query": single_source_compare_focus_query,
+                                "single_confident_source": _source_display_name(resolved_source),
+                            }
+                            if payload.debug
+                            else None,
+                        )
+                    )
 
             if len(compare_sources) != 2 or not compare_focus_phrase:
                 ambiguity_citations = build_citations(
                     _best_result_per_source(raw_distance_results)[:3],
                     original_query,
                 )
+                picker_left = compare_resolution["picker_left"]
+                picker_right = compare_resolution["picker_right"]
+                compare_picker = {
+                    "left": picker_left,
+                    "right": picker_right,
+                    "candidates": compare_resolution["picker_candidates"],
+                    "can_submit": bool(compare_focus_phrase),
+                }
                 return persist_and_return(
                     wrap_response(
                         tenant_id=tenant_id,
                         conversation_id=conversation_id,
                         query=original_query,
                         mode="guided_fallback",
-                        answer="I can compare one field across two documents, but I need the two document names spelled out explicitly. Tell me which two documents to compare.",
+                        answer=(
+                            "Pick the two documents to compare below."
+                            if compare_focus_phrase
+                            else "Pick two documents below, then ask for one field like annual fee or APR."
+                        ),
                         citations=ambiguity_citations,
-                        artifacts=scoped_artifacts({"reason": "compare_documents_needed"}),
+                        artifacts=scoped_artifacts(
+                            {
+                                "reason": "compare_picker",
+                                "compare_field": compare_focus_phrase or None,
+                                "compare_focus_query": compare_focus_query,
+                                "compare_picker": compare_picker,
+                            }
+                        ),
                         debug={
                             **compare_resolution_debug,
                             "compare_focus_query": compare_focus_query,
+                            "picker_left": (
+                                picker_left["display_name"] if picker_left else None
+                            ),
+                            "picker_right": (
+                                picker_right["display_name"] if picker_right else None
+                            ),
                         }
                         if payload.debug
                         else None,
@@ -2319,6 +2846,52 @@ def query_docs(payload: QueryRequest, request: Request):
                 else None
             )
 
+        if len(compare_sources) != 2 or not compare_focus_phrase:
+            selected_picker = [
+                {
+                    "source": source,
+                    "display_name": _source_display_name(source),
+                    "confidence": "high",
+                    "matched_alias": None,
+                }
+                for source, _doc in compare_sources[:2]
+            ]
+            picker_left = selected_picker[0] if selected_picker else None
+            picker_right = selected_picker[1] if len(selected_picker) > 1 else None
+            return persist_and_return(
+                wrap_response(
+                    tenant_id=tenant_id,
+                    conversation_id=conversation_id,
+                    query=original_query,
+                    mode="guided_fallback",
+                    answer=(
+                        "Pick two documents to compare below."
+                        if compare_focus_phrase
+                        else "Pick two documents below, then ask for one field like annual fee or APR."
+                    ),
+                    citations=[],
+                    artifacts=scoped_artifacts(
+                        {
+                            "reason": "compare_picker",
+                            "compare_field": compare_focus_phrase or None,
+                            "compare_focus_query": compare_focus_query,
+                            "compare_picker": {
+                                "left": picker_left,
+                                "right": picker_right,
+                                "candidates": selected_picker,
+                                "can_submit": bool(compare_focus_phrase),
+                            },
+                        }
+                    ),
+                    debug={
+                        **compare_resolution_debug,
+                        "compare_focus_query": compare_focus_query,
+                    }
+                    if payload.debug
+                    else None,
+                )
+            )
+
         compare_results: list[dict[str, Any]] = []
         compare_citations: list[dict[str, Any]] = []
         for source, _doc in compare_sources:
@@ -2342,6 +2915,7 @@ def query_docs(payload: QueryRequest, request: Request):
                     {
                         "reason": "compare_result",
                         "compare_field": compare_focus_phrase,
+                        "compare_focus_query": compare_focus_query,
                         "compare_results": compare_results,
                         "compare_sources": [item["source"] for item in compare_results],
                     }
