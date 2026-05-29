@@ -729,10 +729,6 @@ function App() {
     });
   };
 
-  const handleShare = () => {
-    toast.success("Share link copied to clipboard");
-  };
-
   const handleUpdateSettings = (updates: Partial<SettingsState>) => {
     setSettings((prev) => ({ ...prev, ...updates }));
   };
@@ -891,7 +887,7 @@ function App() {
                 </span>
               </div>
               <div className="hidden lg:block text-xs text-muted-foreground">
-                Document-faithful response system
+                Document faithful response system
               </div>
             </div>
           </div>
@@ -912,9 +908,9 @@ function App() {
             <div className="hidden lg:block h-6 w-px bg-border/50" />
 
             <button
-              onClick={handleShare}
+              onClick={() => setIsSupportCenterOpen(true)}
               className="w-9 h-9 lg:w-auto flex items-center justify-center lg:justify-start gap-2 lg:px-3 lg:py-1.5 bg-secondary/30 hover:bg-secondary/50 rounded-lg border border-border/30 hover:border-border/50 transition-all duration-150 group"
-              aria-label="Share"
+              aria-label="Help"
             >
               <svg
                 className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors"
@@ -926,11 +922,11 @@ function App() {
                   strokeLinecap="round"
                   strokeLinejoin="round"
                   strokeWidth={1.5}
-                  d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"
+                  d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
                 />
               </svg>
               <span className="hidden lg:inline text-xs text-muted-foreground group-hover:text-foreground transition-colors">
-                Share
+                Help
               </span>
             </button>
 

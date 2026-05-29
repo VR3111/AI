@@ -52,7 +52,7 @@ interface SupportCenterProps {
 
 const faqItems = [
   {
-    question: "Why didn’t my answer use a specific document?",
+    question: "Why did my answer not use a specific document?",
     answer:
       "Only indexed documents that contain enough relevant grounding are used. If a file is new, still indexing, or does not support the request, the answer may stay narrower or refuse unsupported claims.",
   },
@@ -62,9 +62,9 @@ const faqItems = [
       "Wait for indexing to complete, then retry. Large files or batches can take longer, and unindexed documents will not reliably ground responses.",
   },
   {
-    question: "Can I ask broad or open-ended questions?",
+    question: "Can I ask broad or open questions?",
     answer:
-      "Yes, but the strongest results come from questions that can be tied back to the uploaded corpus. When the documents do not support an answer, the system should stay document-faithful rather than speculate.",
+      "Yes, but the strongest results come from questions that can be tied back to the uploaded corpus. When the documents do not support an answer, the system should stay faithful to the source material rather than speculate.",
   },
   {
     question: "Why might the app refuse to answer?",
@@ -127,15 +127,15 @@ const supportConfig: Record<
     subjectPrefix: "[General Contact]",
     subjectPlaceholder: "Summarize the topic you want to discuss",
     detailsPlaceholder:
-      "Share your message, question, or context. Include any relevant documents or conversation references if helpful.",
+      "Enter your message, question, or context. Include any relevant documents or conversation references if helpful.",
     helperText:
-      "Use this for open-ended questions, account-related coordination, or support topics that do not fit the other categories.",
+      "Use this for open questions, account coordination, or support topics that do not fit the other categories.",
     guidanceTitle: "General contact checklist",
     guidancePoints: [
       "What you need or want clarified",
       "Any relevant context or timing",
       "Links to affected workflow or conversation if applicable",
-      "Preferred follow-up path if special handling is needed",
+      "Preferred follow up path if special handling is needed",
     ],
   },
 };
@@ -232,21 +232,21 @@ function SupportCenterBody({
                 onClick={() => onScrollToSection("getting-started")}
                 className="rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-secondary/70 hover:text-foreground"
               >
-                Getting Started
+                How App Works
               </button>
               <button
                 type="button"
                 onClick={() => onScrollToSection("system-behavior")}
                 className="rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-secondary/70 hover:text-foreground"
               >
-                System Behavior
+                App Behavior
               </button>
               <button
                 type="button"
                 onClick={() => onScrollToSection("faq")}
                 className="rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-secondary/70 hover:text-foreground"
               >
-                FAQ
+                FAQs
               </button>
               <button
                 type="button"
@@ -262,13 +262,14 @@ function SupportCenterBody({
             <Card className={cardClassName}>
               <CardHeader className={isMobile ? "pb-4" : "pb-5"}>
                 <CardTitle className={isMobile ? "text-base" : "text-lg"}>
-                  Getting Started
+                  How App Works
                 </CardTitle>
                 <CardDescription
                   className={isMobile ? "" : "max-w-3xl text-sm leading-6"}
                 >
-                  The fastest way to get reliable answers is to work with indexed,
-                  document-backed context.
+                  The app answers questions by finding relevant text in your
+                  indexed documents, then using that text as the source for the
+                  response.
                 </CardDescription>
               </CardHeader>
               <CardContent
@@ -280,33 +281,32 @@ function SupportCenterBody({
               >
                 <div className="rounded-xl border border-border/40 bg-background/60 p-3.5">
                   <div className="mb-1 text-sm font-medium text-foreground">
-                    1. Upload documents
+                    1. Upload your files
                   </div>
-                  Add PDFs, text files, or supported documents from the sidebar.
-                  Upload alone does not make a file queryable.
+                  Add PDFs, text files, or supported documents from the sidebar so
+                  the workspace has material to search.
                 </div>
                 <div className="rounded-xl border border-border/40 bg-background/60 p-3.5">
                   <div className="mb-1 text-sm font-medium text-foreground">
                     2. Wait for indexing
                   </div>
-                  Indexed documents are the only ones the assistant can ground
-                  against. If indexing is pending, answers may stay incomplete or
-                  defer.
+                  Indexing prepares each file for search. A document becomes useful
+                  for answers after this step is complete.
                 </div>
                 <div className="rounded-xl border border-border/40 bg-background/60 p-3.5">
                   <div className="mb-1 text-sm font-medium text-foreground">
-                    3. Start the conversation
+                    3. Ask your question
                   </div>
-                  Ask a focused question, review the answer, then continue within
-                  the same thread to refine or narrow the response.
+                  Type a focused question in the message box. The app searches the
+                  indexed material and builds an answer from the matching context.
                 </div>
                 <div className="rounded-xl border border-border/40 bg-background/60 p-3.5">
                   <div className="mb-1 text-sm font-medium text-foreground">
-                    4. Keep usage document-grounded
+                    4. Review and refine
                   </div>
-                  Phrase requests so they can be supported by the uploaded
-                  material. The product is designed to stay faithful to those
-                  documents instead of inventing missing facts.
+                  Continue in the same conversation when you want to narrow the
+                  answer, compare details, or ask for clarification from the same
+                  source set.
                 </div>
               </CardContent>
             </Card>
@@ -316,22 +316,22 @@ function SupportCenterBody({
             <Card className={cardClassName}>
               <CardHeader className={isMobile ? "pb-4" : "pb-5"}>
                 <CardTitle className={isMobile ? "text-base" : "text-lg"}>
-                  System Behavior
+                  App Behavior
                 </CardTitle>
                 <CardDescription
                   className={isMobile ? "" : "max-w-3xl text-sm leading-6"}
                 >
-                  This product is optimized for grounded retrieval and predictable
-                  response behavior.
+                  P1 is built to keep answers steady, traceable, and tied to the
+                  documents available in the active workspace.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3 text-sm text-muted-foreground">
                 <div className="rounded-xl border border-border/40 bg-background/60 p-3.5">
                   <div className="mb-1 text-sm font-medium text-foreground">
-                    Document-faithful responses
+                    Source faithful responses
                   </div>
                   Answers should stay anchored to indexed source material instead
-                  of free-form generation.
+                  of open generation.
                 </div>
                 <div className="rounded-xl border border-border/40 bg-background/60 p-3.5">
                   <div className="mb-1 text-sm font-medium text-foreground">
@@ -345,7 +345,7 @@ function SupportCenterBody({
                     Deterministic behavior
                   </div>
                   Similar prompts over the same indexed data should produce stable
-                  answer patterns, especially for well-scoped questions.
+                  answer patterns, especially for focused questions.
                 </div>
                 <div className="rounded-xl border border-border/40 bg-background/60 p-3.5">
                   <div className="mb-1 text-sm font-medium text-foreground">
@@ -362,7 +362,7 @@ function SupportCenterBody({
             <Card className={cardClassName}>
               <CardHeader className={isMobile ? "pb-4" : "pb-5"}>
                 <CardTitle className={isMobile ? "text-base" : "text-lg"}>
-                  FAQ
+                  FAQs
                 </CardTitle>
                 <CardDescription
                   className={isMobile ? "" : "max-w-3xl text-sm leading-6"}
@@ -769,9 +769,9 @@ export function SupportCenter({
           <DrawerHeader className="border-b border-border/50 px-4 pt-3 pb-3.5">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <DrawerTitle className="text-base">Support Center</DrawerTitle>
+                <DrawerTitle className="text-base">Help</DrawerTitle>
                 <DrawerDescription className="mt-0.5 text-[11px] leading-5">
-                  Product guidance, behavior details, and support intake in one
+                  App guidance, behavior details, FAQs, and support intake in one
                   place.
                 </DrawerDescription>
               </div>
@@ -808,9 +808,9 @@ export function SupportCenter({
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
       <DialogContent className="flex max-h-[92vh] max-w-[min(1180px,calc(100vw-2.5rem))] flex-col gap-0 overflow-hidden rounded-2xl border-border/50 bg-gradient-to-b from-background via-background to-card/80 p-0 shadow-[0_40px_120px_-48px_rgba(0,0,0,0.95)] duration-300">
         <DialogHeader className="border-b border-border/50 bg-gradient-to-r from-card/95 via-card/80 to-card/60 px-7 py-6 text-left">
-          <DialogTitle className="text-xl">Support Center</DialogTitle>
+          <DialogTitle className="text-xl">Help</DialogTitle>
           <DialogDescription>
-            Product guidance, behavior details, and support intake in one
+            App guidance, behavior details, FAQs, and support intake in one
             place.
           </DialogDescription>
         </DialogHeader>
